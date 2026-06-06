@@ -124,7 +124,7 @@ CPU configured for DFS between 40 MHz and 240 MHz with light sleep enabled (`esp
 - **Audio codec** — opened per playback and closed immediately after, so the ES8311/I2S `APB_FREQ_MAX` lock isn't held continuously.
 - **I2S RX (microphone)** — left initialised but **not enabled** in the BSP fork; an enabled I2S channel holds an APB lock even when idle, and this firmware never records.
 - **QMI8658 IMU** — put into Power-Down mode (`CTRL7=0`, `CTRL1.SensorDisable=1`, ~6 µA) at boot.
-- **FT3168 touch** — dropped to Monitor mode (~30 µA vs ~1.5 mA Active) after 10 s of display-on idle; auto-recovers on touch.
+- **FT3168 touch** — dropped to Monitor mode (~30 µA vs ~1.5 mA Active) after 10 s of display-on idle, then to Sleep mode (~10 µA) when the display turns off. On wake, a hardware RESETB pulse (GPIO 9) exits Sleep mode before LVGL begins polling the IC.
 - **WiFi** — fully off (`esp_wifi_stop`) outside of SignalK tile use or one-shot NTP sync. While the SignalK WS is open, the radio runs in `WIFI_PS_MIN_MODEM` (listens every beacon, ~100 ms typical).
 - **Standby floor** — with the display off, the dominant remaining draw is PSRAM self-refresh (~1–2 mA); the rest of the system is in light sleep.
 
@@ -146,7 +146,7 @@ CPU configured for DFS between 40 MHz and 240 MHz with light sleep enabled (`esp
 | Flash | 32 MB external QSPI | — |
 | Battery | 3.7 V Li-ion via MX1.25 header | — |
 
-> **Note on ALDO rails:** The AXP2101 ALDO1–4 rails are disabled by default on cold boot. The firmware explicitly enables them before `bsp_display_start()` to ensure the FT3168 touch controller has power. The BSP cuts the rails when the display sleeps and re-enables them on wake.
+> **Note on ALDO rails:** The AXP2101 ALDO1–4 rails are disabled by default on cold boot. The firmware explicitly enables them before `bsp_display_start()` to power the display circuitry. The BSP cuts all four rails when the display sleeps and re-enables them on wake.
 
 ---
 
