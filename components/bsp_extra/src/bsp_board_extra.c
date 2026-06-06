@@ -4,7 +4,6 @@
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
-#include "driver/i2c.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
@@ -20,6 +19,10 @@ static const char *TAG = "bsp_extra_board";
 static i2c_master_bus_handle_t bus_handle;
 
 static i2c_master_dev_handle_t rtc_dev_handle = NULL;
+static i2c_master_dev_handle_t touch_dev_handle = NULL;
+
+#define FT3168_I2C_ADDR     0x38
+#define FT3168_REG_PMODE    0xA5
 
 esp_err_t bsp_rtc_init(void)
 {
@@ -33,12 +36,12 @@ esp_err_t bsp_rtc_init(void)
         }
     };
 
-    i2c_master_bus_add_device(bus_handle, &dev_config, &rtc_dev_handle);
+    ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(bus_handle, &dev_config, &rtc_dev_handle),
+                        TAG, "RTC I2C device add");
 
     return ESP_OK;
 }
 
-// read function using new API
 int rtc_register_read(uint8_t regAddr, uint8_t *data, uint8_t len) {
     esp_err_t ret = i2c_master_transmit_receive(rtc_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS);
     if (ret != ESP_OK) {
@@ -48,7 +51,6 @@ int rtc_register_read(uint8_t regAddr, uint8_t *data, uint8_t len) {
     return 0;
 }
 
-// write function using new API
 int rtc_register_write(uint8_t regAddr, uint8_t *data, uint8_t len) {
     uint8_t *buffer = (uint8_t *)malloc(len + 1);
     if (!buffer) return -1;
@@ -63,6 +65,33 @@ int rtc_register_write(uint8_t regAddr, uint8_t *data, uint8_t len) {
         return -1;
     }
     return 0;
+}
+
+static esp_err_t bsp_touch_dev_init(void)
+{
+    if (touch_dev_handle) return ESP_OK;
+    i2c_device_config_t dev_config = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address  = FT3168_I2C_ADDR,
+        .scl_speed_hz    = CONFIG_I2C_MASTER_FREQUENCY,
+        .scl_wait_us     = 0,
+        .flags           = { .disable_ack_check = 0 },
+    };
+    return i2c_master_bus_add_device(bus_handle, &dev_config, &touch_dev_handle);
+}
+
+esp_err_t bsp_extra_touch_set_mode(uint8_t mode)
+{
+    if (!touch_dev_handle) {
+        esp_err_t err = bsp_touch_dev_init();
+        if (err != ESP_OK) return err;
+    }
+    uint8_t buf[2] = { FT3168_REG_PMODE, mode };
+    // Short timeout — if the touch IC's I2C state machine is in the Monitor
+    // "won't respond" window (datasheet sec 2.3), this will return error and
+    // the next attempt (after the IC clears its state) will succeed. Don't
+    // treat failure as fatal.
+    return i2c_master_transmit(touch_dev_handle, buf, sizeof(buf), 20);
 }
 
 void bsp_extra_i2c_recover(void)
@@ -86,12 +115,8 @@ esp_err_t bsp_extra_init(void)
         ESP_LOGE(TAG, "RTC init failed");
         return ret;
     }
-
-    ret = pcf85063a_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "PCF85063A init failed");
-        return ret;
-    }    
+    // pcf85063a_init() is called by rtc_start() via settings_init(); don't
+    // call it here or the RTC is configured twice on every boot.
 
     ret = bsp_power_init();
     if (ret != ESP_OK) {

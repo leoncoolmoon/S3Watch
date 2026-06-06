@@ -156,11 +156,13 @@ static void batt_screen_events(lv_event_t* e)
 static void batt_update_cb(lv_timer_t* t)
 {
     (void)t;
-    if (active_screen_get() == batt_screen) {
-        bsp_display_lock(0);
-        batt_update_values();
-        bsp_display_unlock();
-    }
+    // Timer is owned by batt_screen and torn down in on_delete, so it only
+    // fires while the screen exists. No need to gate on "is this the active
+    // LVGL screen" — that check was a leftover from before the tileview
+    // migration when batt_screen was loaded as a top-level screen.
+    bsp_display_lock(0);
+    batt_update_values();
+    bsp_display_unlock();
 }
 
 static void batt_update_values(void)

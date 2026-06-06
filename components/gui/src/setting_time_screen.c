@@ -20,6 +20,10 @@ static void save(lv_event_t *e)
 {
     (void)e;
     struct tm t = {0};
+    // -1 = let mktime decide DST from the TZ rule, so an entered local time in
+    // a DST-active window doesn't get shifted by +1 hour on the round-trip
+    // through UTC and back.
+    t.tm_isdst = -1;
     t.tm_hour = lv_roller_get_selected(roller_hour);
     t.tm_min  = lv_roller_get_selected(roller_min);
     t.tm_sec  = lv_roller_get_selected(roller_sec);
@@ -33,8 +37,10 @@ static void save(lv_event_t *e)
     if (t.tm_mon == 1 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) max_day = 29;
     if (t.tm_mday > max_day) t.tm_mday = max_day;
 
-    rtc_set_time(&t);
-    ESP_LOGI(TAG, "Time set: %04d-%02d-%02d %02d:%02d:%02d",
+    // User-entered values are local time under the current TZ. The helper
+    // converts to UTC and writes through to the canonical UTC path.
+    rtc_set_time_from_local(&t);
+    ESP_LOGI(TAG, "Time set (local): %04d-%02d-%02d %02d:%02d:%02d",
              t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
              t.tm_hour, t.tm_min, t.tm_sec);
     ui_dynamic_subtile_close();
@@ -100,8 +106,14 @@ static lv_obj_t *make_row(lv_obj_t *parent)
 
 void setting_time_screen_create(lv_obj_t *parent)
 {
+    // Initial roller values: current local time (PCF / system time is UTC;
+    // localtime_r applies the user's TZ).
     struct tm cur = {0};
-    if (rtc_get_time(&cur) != ESP_OK) {
+    time_t now = time(NULL);
+    if (now > 0 && localtime_r(&now, &cur) == NULL) {
+        cur = (struct tm){ .tm_year = 125, .tm_mon = 0, .tm_mday = 1 };
+    }
+    if (cur.tm_year < 125) {
         cur = (struct tm){ .tm_year = 125, .tm_mon = 0, .tm_mday = 1 };
     }
 

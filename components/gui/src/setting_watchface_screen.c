@@ -85,8 +85,24 @@ void setting_watchface_screen_create(lv_obj_t* parent)
     lv_label_set_text(lbl_face, "Face");
 
     s_roller_face = lv_roller_create(content);
-    lv_roller_set_options(s_roller_face, "Face 1\nFace 2", LV_ROLLER_MODE_NORMAL);
-    lv_roller_set_visible_row_count(s_roller_face, 2);
+    // Build the roller options from the watchface registry so this UI stays
+    // in sync with whatever faces are compiled in (Phase 3 modularization).
+    {
+        int n = watchface_get_count();
+        if (n < 1) n = 1;
+        // Each entry: up to ~24 chars name + '\n' separator. 32B per entry is safe.
+        char opts[32 * 8] = {0};
+        size_t pos = 0;
+        for (int i = 0; i < n; i++) {
+            const char *name = watchface_get_name(i);
+            int written = snprintf(opts + pos, sizeof(opts) - pos,
+                                   (i == 0) ? "%s" : "\n%s", name);
+            if (written < 0 || (size_t)written >= sizeof(opts) - pos) break;
+            pos += (size_t)written;
+        }
+        lv_roller_set_options(s_roller_face, opts, LV_ROLLER_MODE_NORMAL);
+        lv_roller_set_visible_row_count(s_roller_face, (n < 3) ? n : 3);
+    }
     lv_roller_set_selected(s_roller_face, (uint16_t)settings_get_watchface_style(), LV_ANIM_OFF);
     lv_obj_set_style_text_font(s_roller_face, &font_normal_32, 0);
     lv_obj_set_style_text_color(s_roller_face, lv_color_white(), LV_PART_MAIN);

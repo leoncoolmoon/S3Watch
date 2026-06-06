@@ -19,26 +19,9 @@
 #include "nvs_flash.h"
 #include "wifi_manager.h"
 #include "ntp_sync.h"
+#include "signalk_client.h"
 
 static const char *TAG = "MAIN";
-
-/*
-#define CONFIG_LV_USE_LOG 1
-#define CONFIG_LV_LOG_LEVEL LV_LOG_LEVEL_INFO  // or DEBUG/TRACE
-
-static void lvgl_log_cb(lv_log_level_t level, const char *buf)
-{
-    // buf usually already ends with '\n'; don't add another.
-    switch (level) {
-    case LV_LOG_LEVEL_ERROR: ESP_LOGE("LVGL", "%s", buf); break;
-    case LV_LOG_LEVEL_WARN:  ESP_LOGW("LVGL", "%s", buf); break;
-    case LV_LOG_LEVEL_USER:  // falls through to INFO
-    case LV_LOG_LEVEL_INFO:  ESP_LOGI("LVGL", "%s", buf); break;
-    //case LV_LOG_LEVEL_DEBUG: ESP_LOGD("LVGL", "%s", buf); break;
-    case LV_LOG_LEVEL_TRACE: ESP_LOGV("LVGL", "%s", buf); break;
-    default:                 ESP_LOGI("LVGL", "%s", buf); break;
-    }
-}*/
 
 extern "C" void app_main(void) {
 
@@ -86,21 +69,19 @@ extern "C" void app_main(void) {
 
   wifi_manager_init();
   ntp_sync_init();
+  signalk_client_init();
   // Try saved networks — if one connects, ntp_sync fires automatically,
   // syncs the RTC, then calls wifi_manager_release() to stop the radio.
   wifi_manager_auto_connect();
 
-  // UI task chama display_manager_init() após criar o ecrã
+  // UI task calls display_manager_init() after creating the screen.
 
-  // UI e BLE subscrevem eventos diretamente; sem acoplamento no main
-
-  //sensors_init();
+  // QMI8658 is wired to always-on VCC3V3 and powers up active (~270 µA).
+  // Drop it into Power-Down (~6 µA) — see sensors_low_power_idle().
+  sensors_low_power_idle();
 
   // Run the UI at a slightly higher priority so LVGL remains responsive
   xTaskCreate(ui_task, "ui", 8000, NULL, 4, NULL);
-  
-  // Sensor sampling can run at a lower priority without affecting UX
-  //xTaskCreate(sensors_task, "sensors", 4096, NULL, 3, NULL);
 
   // Play a subtle startup tone once the system is up
   audio_alert_play_startup();

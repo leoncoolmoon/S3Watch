@@ -91,20 +91,6 @@ static void control_screen_on_delete(lv_event_t* e)
     control_screen = NULL;
 }
 
-static void screen_events(lv_event_t* e)
-{
-    if (lv_event_get_code(e) == LV_EVENT_GESTURE) {
-        lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
-        if (dir == LV_DIR_BOTTOM) {
-            lv_indev_wait_release(lv_indev_active());
-            load_screen(control_screen, watchface_screen_get(), LV_SCR_LOAD_ANIM_MOVE_BOTTOM);
-        }
-    } else if (lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) {
-        update_time_label();
-        if (time_timer) lv_timer_ready(time_timer);
-    }
-}
-
 void control_screen_create(lv_obj_t* parent)
 {
     static lv_style_t cmain_style;
@@ -122,8 +108,6 @@ void control_screen_create(lv_obj_t* parent)
     lv_obj_set_flex_flow(control_screen, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(control_screen, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(control_screen, 10, 0);
-    lv_obj_add_event_cb(control_screen, screen_events, LV_EVENT_GESTURE, NULL);
-    lv_obj_add_event_cb(control_screen, screen_events, LV_EVENT_SCREEN_LOADED, NULL);
     lv_obj_add_event_cb(control_screen, control_screen_on_delete, LV_EVENT_DELETE, NULL);
 
     // Header: clock
@@ -214,11 +198,6 @@ void control_screen_create(lv_obj_t* parent)
     }
 }
 
-lv_obj_t* control_screen_get(void)
-{
-    if (control_screen == NULL) control_screen_create(NULL);
-    return control_screen;
-}
 
 static void click_event_cb(lv_event_t* e)
 {

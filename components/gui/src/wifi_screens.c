@@ -65,15 +65,19 @@ static void pw_done_cb(const char *text, void *user_data)
 {
     pw_ctx_t *ctx = (pw_ctx_t*)user_data;
     ESP_LOGI(TAG, "Connecting to '%s'", ctx->ssid);
+    // wifi_manager_connect copies the password synchronously, so it's safe to
+    // consume `text` (which points into the keyboard's buffer) here.
     wifi_manager_connect(ctx->ssid, text, true);
-    lv_obj_del(ctx->screen);
+    // Defer screen teardown — we're inside the keyboard's button-click event,
+    // and this screen owns that button. Synchronous delete = use-after-free.
+    lv_obj_del_async(ctx->screen);
     free(ctx);
 }
 
 static void pw_cancel_cb(void *user_data)
 {
     pw_ctx_t *ctx = (pw_ctx_t*)user_data;
-    lv_obj_del(ctx->screen);
+    lv_obj_del_async(ctx->screen);
     free(ctx);
 }
 
@@ -339,14 +343,16 @@ static void ntp_kb_done(const char *text, void *user_data)
         ntp_sync_set_server(text);
         lv_label_set_text_fmt(ctx->cur_label, "Current: %s", text);
     }
-    lv_obj_del(ctx->screen);
+    // Defer teardown — see pw_done_cb. Screen owns the keyboard button whose
+    // click event we are currently inside.
+    lv_obj_del_async(ctx->screen);
     free(ctx);
 }
 
 static void ntp_kb_cancel(void *user_data)
 {
     ntp_kb_ctx_t *ctx = (ntp_kb_ctx_t*)user_data;
-    lv_obj_del(ctx->screen);
+    lv_obj_del_async(ctx->screen);
     free(ctx);
 }
 

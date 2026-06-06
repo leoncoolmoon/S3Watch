@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_heap_caps.h"
 #include <stdio.h>
 #include <sys/stat.h>
 
@@ -129,27 +130,32 @@ static bool play_wav_from_spiffs(const char *path)
     size_t n = fread(hdr, 1, sizeof(hdr), f);
     if (n != sizeof(hdr)) { fclose(f); return false; }
     if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) { fclose(f); return false; }
-    // parse fmt chunk
-    // Assuming standard layout: fmt chunk at 12, data chunk at or after 36
-    uint16_t audio_format = *(uint16_t*)(hdr + 20);
-    uint16_t num_channels = *(uint16_t*)(hdr + 22);
-    uint32_t sample_rate  = *(uint32_t*)(hdr + 24);
-    uint16_t bits_per_spl = *(uint16_t*)(hdr + 34);
+    // Parse fmt chunk fields using memcpy to avoid unaligned pointer casts (UB).
+    uint16_t audio_format, num_channels, bits_per_spl;
+    uint32_t sample_rate;
+    memcpy(&audio_format, hdr + 20, sizeof(audio_format));
+    memcpy(&num_channels, hdr + 22, sizeof(num_channels));
+    memcpy(&sample_rate,  hdr + 24, sizeof(sample_rate));
+    memcpy(&bits_per_spl, hdr + 34, sizeof(bits_per_spl));
     if (audio_format != 1 || (num_channels != 1 && num_channels != 2) || bits_per_spl != 16) {
         fclose(f);
         return false;
     }
-    // Find data chunk (handle potential extra fmt bytes)
+    // Find data chunk (handles non-standard fmt chunk sizes).
     uint32_t data_offset = 12;
     uint32_t data_size = 0;
     for (;;) {
         if (fseek(f, data_offset, SEEK_SET) != 0) { fclose(f); return false; }
         unsigned char chunk[8];
         if (fread(chunk, 1, 8, f) != 8) { fclose(f); return false; }
-        uint32_t sz = *(uint32_t*)(chunk + 4);
+        uint32_t sz;
+        memcpy(&sz, chunk + 4, sizeof(sz));
         if (memcmp(chunk, "data", 4) == 0) { data_size = sz; data_offset += 8; break; }
+        // Guard against chunk-size overflow before adding (F6).
+        if (sz > (uint32_t)st.st_size || data_offset > (uint32_t)st.st_size - 8 - sz) {
+            fclose(f); return false;
+        }
         data_offset += 8 + sz;
-        if (data_offset + 8 > (uint32_t)st.st_size) { fclose(f); return false; }
     }
     if (fseek(f, data_offset, SEEK_SET) != 0) { fclose(f); return false; }
 
@@ -202,13 +208,16 @@ void audio_alert_notify(void)
     ESP_LOGI(TAG, "notification.wav not found, using synthesized tone");
     // Synthesize a bell-like "Dong": low base + partials, short pitch glide, multi-stage decay
     enum { SR = 22050 };
-    const float base_f = 440.0f;     // base pitch, slightly lower for deeper "Dong"
-    const float dur_s  = 0.32f;      // overall duration
+    const float base_f = 440.0f;
+    const float dur_s  = 0.32f;
     size_t N = (size_t)(SR * dur_s);
-    static int16_t buf[8192];
-    size_t max_samples = sizeof(buf) / sizeof(buf[0]);
-    if (N > max_samples) {
-        N = max_samples;
+    const size_t max_samples = 8192;
+    if (N > max_samples) N = max_samples;
+    // Allocate from PSRAM to avoid consuming 16 KB of scarce internal SRAM.
+    int16_t *buf = (int16_t *)heap_caps_malloc(max_samples * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (!buf) {
+        ESP_LOGE(TAG, "synth buf alloc failed");
+        return;
     }
 
     // Short fade-in to avoid click and give a percussive strike
@@ -239,10 +248,10 @@ void audio_alert_notify(void)
 
         // Sum of partials (bell-ish spectrum, simple model)
         float s = 0.0f;
-        s += a0 * e0 * sinf(2.0f * 3.14159265f * f0 * t);
-        s += a1 * e1 * sinf(2.0f * 3.14159265f * f1 * t);
-        s += a2 * e2 * sinf(2.0f * 3.14159265f * f2 * t);
-        s += a3 * e3 * sinf(2.0f * 3.14159265f * f3 * t);
+        s += a0 * e0 * sinf(2.0f * (float)M_PI * f0 * t);
+        s += a1 * e1 * sinf(2.0f * (float)M_PI * f1 * t);
+        s += a2 * e2 * sinf(2.0f * (float)M_PI * f2 * t);
+        s += a3 * e3 * sinf(2.0f * (float)M_PI * f3 * t);
 
         // Attack ramp
         float fade_in = 1.0f;
@@ -257,6 +266,7 @@ void audio_alert_notify(void)
         buf[n] = (int16_t)v;
     }
     play_pcm_16_mono_22k(buf, N);
+    heap_caps_free(buf);
 }
 
 // Delayed startup tone to avoid first-play click during boot

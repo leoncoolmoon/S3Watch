@@ -15,18 +15,39 @@
 #include "cJSON.h"
 
 static const char *TAG = "SETTINGS";
-static uint8_t brightness = 30;
-static uint32_t display_timeout_ms = 10000;
-static bool sound_enabled = true;
-static bool bluetooth_enabled = true;
-static uint8_t notify_volume = 100; // percent 0..100 (louder default)
-static uint32_t step_goal = 8000;
-static char ntp_server[64] = "pool.ntp.org";
-static bool time_24h = true;
-static bool wifi_enabled = false;
-static int watchface_style = 0;
-static int watchface_bg = 0;
+
+#define DEFAULT_BRIGHTNESS       25
+#define DEFAULT_DISPLAY_TIMEOUT  10000
+#define DEFAULT_SOUND_ENABLED    true
+#define DEFAULT_NOTIFY_VOLUME    100
+#define DEFAULT_NTP_SERVER       "pool.ntp.org"
+#define DEFAULT_TZ               "UTC0"
+#define DEFAULT_TIME_24H         true
+#define DEFAULT_WIFI_ENABLED     false
+#define DEFAULT_WATCHFACE_STYLE  0
+#define DEFAULT_WATCHFACE_BG     0
+#define DEFAULT_SIGNALK_HOST     ""
+#define DEFAULT_SIGNALK_PORT     3000
+
+static uint8_t brightness = DEFAULT_BRIGHTNESS;
+static uint32_t display_timeout_ms = DEFAULT_DISPLAY_TIMEOUT;
+static bool sound_enabled = DEFAULT_SOUND_ENABLED;
+static uint8_t notify_volume = DEFAULT_NOTIFY_VOLUME;
+static char ntp_server[64] = DEFAULT_NTP_SERVER;
+static char tz[40] = DEFAULT_TZ;        // POSIX TZ string; applied via setenv/tzset
+static char signalk_host[64] = DEFAULT_SIGNALK_HOST;  // empty = unconfigured
+static uint16_t signalk_port = DEFAULT_SIGNALK_PORT;
+static bool time_24h = DEFAULT_TIME_24H;
+static bool wifi_enabled = DEFAULT_WIFI_ENABLED;
+static int watchface_style = DEFAULT_WATCHFACE_STYLE;
+static int watchface_bg = DEFAULT_WATCHFACE_BG;
 static bool spiffs_ready = false;
+
+// Apply the current `tz` value to the libc localtime machinery.
+static void apply_tz(void) {
+    setenv("TZ", tz, 1);
+    tzset();
+}
 
 // Debounced save timer (to limit flash writes when sliders change)
 static TimerHandle_t s_save_timer = NULL;
@@ -92,7 +113,10 @@ static bool settings_mount_spiffs(void)
         bsp_display_unlock();
     }
 
-    // Retry with format
+    // Unregister before retrying — a failed mount may have left the VFS entry
+    // in a partial state, which would cause the second register to return
+    // ESP_ERR_INVALID_STATE and skip the format entirely.
+    esp_vfs_spiffs_unregister(SETTINGS_PARTITION);
     conf.format_if_mount_failed = true;
     ret = esp_vfs_spiffs_register(&conf);
     if (overlay && bsp_display_lock(100)) {
@@ -120,14 +144,15 @@ static bool settings_write_json(void)
     cJSON_AddNumberToObject(root, "brightness", brightness);
     cJSON_AddNumberToObject(root, "display_timeout_ms", (double)display_timeout_ms);
     cJSON_AddBoolToObject(root, "sound_enabled", sound_enabled);
-    cJSON_AddBoolToObject(root, "bluetooth_enabled", bluetooth_enabled);
     cJSON_AddNumberToObject(root, "notify_volume", (double)notify_volume);
-    cJSON_AddNumberToObject(root, "step_goal", (double)step_goal);
     cJSON_AddStringToObject(root, "ntp_server", ntp_server);
+    cJSON_AddStringToObject(root, "tz", tz);
     cJSON_AddBoolToObject(root, "time_24h", time_24h);
     cJSON_AddBoolToObject(root, "wifi_enabled", wifi_enabled);
     cJSON_AddNumberToObject(root, "watchface_style", watchface_style);
     cJSON_AddNumberToObject(root, "watchface_bg", watchface_bg);
+    cJSON_AddStringToObject(root, "signalk_host", signalk_host);
+    cJSON_AddNumberToObject(root, "signalk_port", (double)signalk_port);
 
     char *json_str = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -177,24 +202,40 @@ static bool settings_read_json(void)
         ESP_LOGE(TAG, "Failed to parse JSON settings");
         return false;
     }
-    // Optional fields; keep defaults if missing
+    // Optional fields; keep defaults if missing. Clamp numerics before
+    // narrowing — a corrupted JSON with brightness:300 would otherwise
+    // wrap to 44 and silently behave wrong.
     cJSON *j;
     j = cJSON_GetObjectItem(root, "brightness");
-    if (cJSON_IsNumber(j)) brightness = (uint8_t)j->valuedouble;
+    if (cJSON_IsNumber(j)) {
+        double v = j->valuedouble;
+        brightness = (v < 0) ? 0 : (v > 100) ? 100 : (uint8_t)v;
+    }
     j = cJSON_GetObjectItem(root, "display_timeout_ms");
-    if (cJSON_IsNumber(j)) display_timeout_ms = (uint32_t)j->valuedouble;
+    if (cJSON_IsNumber(j)) {
+        double v = j->valuedouble;
+        // Accept only the whitelisted values matching settings_set_display_timeout
+        uint32_t to = (uint32_t)v;
+        if (to == 10000 || to == 20000 || to == 30000 || to == 60000) {
+            display_timeout_ms = to;
+        }
+    }
     j = cJSON_GetObjectItem(root, "sound_enabled");
     if (cJSON_IsBool(j)) sound_enabled = cJSON_IsTrue(j);
-    j = cJSON_GetObjectItem(root, "bluetooth_enabled");
-    if (cJSON_IsBool(j)) bluetooth_enabled = cJSON_IsTrue(j);
     j = cJSON_GetObjectItem(root, "notify_volume");
-    if (cJSON_IsNumber(j)) notify_volume = (uint8_t)j->valuedouble;
-    j = cJSON_GetObjectItem(root, "step_goal");
-    if (cJSON_IsNumber(j)) step_goal = (uint32_t)j->valuedouble;
+    if (cJSON_IsNumber(j)) {
+        double v = j->valuedouble;
+        notify_volume = (v < 0) ? 0 : (v > 100) ? 100 : (uint8_t)v;
+    }
     j = cJSON_GetObjectItem(root, "ntp_server");
     if (cJSON_IsString(j) && j->valuestring[0]) {
         strncpy(ntp_server, j->valuestring, sizeof(ntp_server) - 1);
         ntp_server[sizeof(ntp_server) - 1] = '\0';
+    }
+    j = cJSON_GetObjectItem(root, "tz");
+    if (cJSON_IsString(j) && j->valuestring[0]) {
+        strncpy(tz, j->valuestring, sizeof(tz) - 1);
+        tz[sizeof(tz) - 1] = '\0';
     }
     j = cJSON_GetObjectItem(root, "time_24h");
     if (cJSON_IsBool(j)) time_24h = cJSON_IsTrue(j);
@@ -204,6 +245,17 @@ static bool settings_read_json(void)
     if (cJSON_IsNumber(j)) watchface_style = (int)cJSON_GetNumberValue(j);
     j = cJSON_GetObjectItem(root, "watchface_bg");
     if (cJSON_IsNumber(j)) watchface_bg = (int)cJSON_GetNumberValue(j);
+    j = cJSON_GetObjectItem(root, "signalk_host");
+    if (cJSON_IsString(j)) {
+        // Empty string is valid — clears the setting.
+        strncpy(signalk_host, j->valuestring, sizeof(signalk_host) - 1);
+        signalk_host[sizeof(signalk_host) - 1] = '\0';
+    }
+    j = cJSON_GetObjectItem(root, "signalk_port");
+    if (cJSON_IsNumber(j)) {
+        int p = (int)j->valuedouble;
+        if (p >= 1 && p <= 65535) signalk_port = (uint16_t)p;
+    }
     cJSON_Delete(root);
     // Apply to hardware where relevant
     bsp_display_brightness_set(brightness);
@@ -213,9 +265,10 @@ static bool settings_read_json(void)
 
 void settings_init(void) {
     ESP_LOGI(TAG, "Settings init: mount + load JSON");
-    (void)settings_load();
-    // Ensure brightness is applied even if using defaults
-    bsp_display_brightness_set(brightness);
+    (void)settings_load();  // applies brightness internally if it reads a value
+    // Apply timezone NOW (before rtc_start), so any time-conversion done
+    // during boot uses the right TZ.
+    apply_tz();
 
     // Start RTC first — this reads from chip and falls back to NVS if the
     // chip lost power. The default-time check below only fires if neither
@@ -270,21 +323,6 @@ bool settings_get_sound(void) {
     return sound_enabled;
 }
 
-void settings_set_bluetooth_enabled(bool enabled)
-{
-    if (bluetooth_enabled == enabled) {
-        return;
-    }
-    bluetooth_enabled = enabled;
-    ESP_LOGI(TAG, "Bluetooth %s", enabled ? "enabled" : "disabled");
-    schedule_save();
-}
-
-bool settings_get_bluetooth_enabled(void)
-{
-    return bluetooth_enabled;
-}
-
 void settings_set_notify_volume(uint8_t vol_percent)
 {
     if (vol_percent > 100) vol_percent = 100;
@@ -305,18 +343,6 @@ bool settings_load(void) {
     return settings_read_json();
 }
 
-void settings_set_step_goal(uint32_t steps)
-{
-    if (steps < 1000) steps = 1000;
-    if (steps > 100000) steps = 100000;
-    step_goal = steps;
-    schedule_save();
-}
-
-uint32_t settings_get_step_goal(void)
-{
-    return step_goal;
-}
 
 void settings_set_ntp_server(const char *server)
 {
@@ -331,19 +357,62 @@ const char *settings_get_ntp_server(void)
     return ntp_server;
 }
 
+void settings_set_tz(const char *posix_tz)
+{
+    if (!posix_tz || !posix_tz[0]) return;
+    strncpy(tz, posix_tz, sizeof(tz) - 1);
+    tz[sizeof(tz) - 1] = '\0';
+    apply_tz();
+    schedule_save();
+}
+
+const char *settings_get_tz(void)
+{
+    return tz;
+}
+
+void settings_set_signalk_host(const char *host)
+{
+    if (!host) host = "";
+    strncpy(signalk_host, host, sizeof(signalk_host) - 1);
+    signalk_host[sizeof(signalk_host) - 1] = '\0';
+    schedule_save();
+}
+
+const char *settings_get_signalk_host(void)
+{
+    return signalk_host;
+}
+
+void settings_set_signalk_port(uint16_t port)
+{
+    if (port == 0) return;
+    signalk_port = port;
+    schedule_save();
+}
+
+uint16_t settings_get_signalk_port(void)
+{
+    return signalk_port;
+}
+
 static void apply_defaults(void)
 {
-    brightness = 30;
-    display_timeout_ms = 10000;
-    sound_enabled = true;
-    notify_volume = 100;
-    step_goal = 8000;
-    bluetooth_enabled = true;
-    strncpy(ntp_server, "pool.ntp.org", sizeof(ntp_server) - 1);
-    time_24h = true;
-    wifi_enabled = false;
-    watchface_style = 0;
-    watchface_bg = 0;
+    brightness = DEFAULT_BRIGHTNESS;
+    display_timeout_ms = DEFAULT_DISPLAY_TIMEOUT;
+    sound_enabled = DEFAULT_SOUND_ENABLED;
+    notify_volume = DEFAULT_NOTIFY_VOLUME;
+    strncpy(ntp_server, DEFAULT_NTP_SERVER, sizeof(ntp_server) - 1);
+    ntp_server[sizeof(ntp_server) - 1] = '\0';
+    strncpy(tz, DEFAULT_TZ, sizeof(tz) - 1);
+    tz[sizeof(tz) - 1] = '\0';
+    time_24h = DEFAULT_TIME_24H;
+    wifi_enabled = DEFAULT_WIFI_ENABLED;
+    watchface_style = DEFAULT_WATCHFACE_STYLE;
+    watchface_bg = DEFAULT_WATCHFACE_BG;
+    strncpy(signalk_host, DEFAULT_SIGNALK_HOST, sizeof(signalk_host) - 1);
+    signalk_host[sizeof(signalk_host) - 1] = '\0';
+    signalk_port = DEFAULT_SIGNALK_PORT;
 }
 
 bool settings_reset_defaults(void)

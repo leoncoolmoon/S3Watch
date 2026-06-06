@@ -2,13 +2,15 @@
 #include "ui.h"
 #include "ui_fonts.h"
 #include "settings.h"
-#include "setting_step_goal_screen.h"
 #include "setting_timeout_screen.h"
 #include "setting_sound_screen.h"
 #include "setting_storage_screen.h"
 #include "setting_time_screen.h"
 #include "setting_time_format_screen.h"
+#include "setting_tz_screen.h"
 #include "setting_watchface_screen.h"
+#include "setting_signalk_screen.h"
+#include "setting_ondev_test_screen.h"
 #include "wifi_screens.h"
 
 #include "settings_screen.h"
@@ -18,7 +20,6 @@ static const char* TAG = "SettingsMenu";
 static lv_obj_t* smenu_screen;
 static void on_delete(lv_event_t* e);
 static lv_obj_t* smenu_content;
-static lv_obj_t* r1;
 static lv_obj_t* r2;
 static lv_obj_t* r3;
 static lv_obj_t* r4;
@@ -28,25 +29,23 @@ static lv_obj_t* r7;
 static lv_obj_t* r8;
 static lv_obj_t* r9;
 
-static void open_goal(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_step_goal_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_timeout(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_timeout_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_sound(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_sound_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_storage(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_storage_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_time(lv_event_t* e)    { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_time_screen_create(t);    ui_dynamic_subtile_show(); } }
+static void open_tz(lv_event_t* e)      { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_tz_screen_create(t);      ui_dynamic_subtile_show(); } }
 static void open_wifi(lv_event_t* e)    { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { wifi_scan_screen_open(t);          ui_dynamic_subtile_show(); } }
 static void open_ntp(lv_event_t* e)     { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { ntp_settings_screen_open(t);       ui_dynamic_subtile_show(); } }
+static void open_signalk(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_signalk_screen_create(t); ui_dynamic_subtile_show(); } }
+static void open_ondev_test(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_ondev_test_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_time_format(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_time_format_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_watchface(lv_event_t* e)   { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_watchface_screen_create(t);   ui_dynamic_subtile_show(); } }
 static void refresh_values(lv_obj_t* content)
 {
     if (!content) return;
-    uint32_t goal = settings_get_step_goal();
     uint32_t to = settings_get_display_timeout();
     bool snd = settings_get_sound();
-    char buf[16];
 
-    snprintf(buf, sizeof(buf), "%u", (unsigned)goal);
-    lv_label_set_text(r1, buf);
     const char* ttxt = (to == SETTINGS_DISPLAY_TIMEOUT_10S) ? "10 s" : (to == SETTINGS_DISPLAY_TIMEOUT_20S) ? "20 s" : (to == SETTINGS_DISPLAY_TIMEOUT_30S) ? "30 s" : "1 min";
     lv_label_set_text(r2, ttxt);
     if (snd) {
@@ -145,17 +144,22 @@ void settings_menu_screen_create(lv_obj_t* parent)
     lv_obj_set_style_pad_right(smenu_content, 12, 0);
 
     lv_obj_set_flex_flow(smenu_content, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(smenu_content, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+    // Main axis = START so rows stack from the top and the scroll can actually
+    // reach the first row (centering on the main axis would keep the content
+    // group centered and spring back from scroll attempts).
+    lv_obj_set_flex_align(smenu_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
 
-    r1 = make_row(smenu_content, LV_SYMBOL_PLAY, "Step Goal", "--", open_goal);
     r2 = make_row(smenu_content, LV_SYMBOL_SETTINGS, "Display Timeout", "--", open_timeout);
     r3 = make_row(smenu_content, LV_SYMBOL_AUDIO, "Sound", "--", open_sound);
     r4 = make_row(smenu_content, LV_SYMBOL_SAVE, "Storage", "Tools", open_storage);
     r5 = make_row(smenu_content, LV_SYMBOL_EDIT, "Set Time", "", open_time);
+    (void)make_row(smenu_content, LV_SYMBOL_GPS, "Time Zone", "", open_tz);
     r6 = make_row(smenu_content, LV_SYMBOL_WIFI, "Wi-Fi", "", open_wifi);
     r7 = make_row(smenu_content, LV_SYMBOL_REFRESH, "NTP Server", "", open_ntp);
+    (void)make_row(smenu_content, LV_SYMBOL_UPLOAD, "SignalK", "", open_signalk);
     r8 = make_row(smenu_content, NULL, "Time Format", settings_get_time_24h() ? "24h" : "12h", open_time_format);
     r9 = make_row(smenu_content, NULL, "Watch Face", settings_get_watchface_style() == 0 ? "Face 1" : "Face 2", open_watchface);
+    (void)make_row(smenu_content, LV_SYMBOL_OK, "Run Tests", "", open_ondev_test);
 
     refresh_values(smenu_content);
 

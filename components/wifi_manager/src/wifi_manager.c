@@ -167,8 +167,12 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password, bool save
     cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
     esp_wifi_disconnect();
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
-    esp_err_t err = esp_wifi_connect();
+    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "set_config failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = esp_wifi_connect();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Connect failed: %s", esp_err_to_name(err));
         esp_event_post(WIFI_MANAGER_EVENT_BASE, WIFI_MGR_EVT_CONNECT_FAILED,
@@ -188,6 +192,11 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password, bool save
             }
         }
         cJSON *entry = cJSON_CreateObject();
+        if (!entry) {
+            ESP_LOGE(TAG, "OOM saving network '%s'", ssid);
+            cJSON_Delete(arr);
+            return ESP_OK;  // connect already succeeded; save is best-effort
+        }
         cJSON_AddStringToObject(entry, "ssid", ssid);
         cJSON_AddStringToObject(entry, "pass", password);
         cJSON_AddItemToArray(arr, entry);

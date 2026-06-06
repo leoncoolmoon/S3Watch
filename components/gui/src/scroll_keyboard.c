@@ -118,14 +118,12 @@ static void space_cb(lv_event_t *e)
 static void done_cb(lv_event_t *e)
 {
     kb_ctx_t *ctx = (kb_ctx_t*)lv_event_get_user_data(e);
+    // on_done typically tears down the screen that owns this keyboard (and
+    // therefore this button). It must do so via lv_obj_del_async so the
+    // teardown happens AFTER this event finishes — we must not touch the
+    // event target or any keyboard object after this call returns.
     if (ctx->on_done) ctx->on_done(ctx->text, ctx->user_data);
-    lv_obj_t *parent = lv_obj_get_parent(lv_event_get_target(e));
-    while (parent && lv_obj_get_parent(parent)) {
-        lv_obj_t *p2 = lv_obj_get_parent(parent);
-        if (p2 == lv_scr_act() || p2 == lv_layer_top()) break;
-        parent = p2;
-    }
-    // Clean up ctx after all callbacks have fired
+    // Free our own context after the current event/async cycle completes.
     lv_async_call((lv_async_cb_t)(void(*)(void*))free, ctx);
 }
 
