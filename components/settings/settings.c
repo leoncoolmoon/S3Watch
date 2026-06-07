@@ -5,6 +5,7 @@
 #include "bsp/esp32_s3_touch_amoled_2_06.h"
 #include "bsp_board_extra.h"
 #include "rtc_lib.h"
+#include "wifi_manager.h"
 #include <time.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -28,6 +29,7 @@ static const char *TAG = "SETTINGS";
 #define DEFAULT_WATCHFACE_BG     0
 #define DEFAULT_SIGNALK_HOST     ""
 #define DEFAULT_SIGNALK_PORT     3000
+#define DEFAULT_SD_LOGGING_ENABLED false
 
 static uint8_t brightness = DEFAULT_BRIGHTNESS;
 static uint32_t display_timeout_ms = DEFAULT_DISPLAY_TIMEOUT;
@@ -39,6 +41,7 @@ static char signalk_host[64] = DEFAULT_SIGNALK_HOST;  // empty = unconfigured
 static uint16_t signalk_port = DEFAULT_SIGNALK_PORT;
 static bool time_24h = DEFAULT_TIME_24H;
 static bool wifi_enabled = DEFAULT_WIFI_ENABLED;
+static bool sd_logging_enabled = DEFAULT_SD_LOGGING_ENABLED;
 static int watchface_style = DEFAULT_WATCHFACE_STYLE;
 static int watchface_bg = DEFAULT_WATCHFACE_BG;
 static bool spiffs_ready = false;
@@ -136,11 +139,12 @@ static bool settings_mount_spiffs(void)
     return false;
 }
 
-static bool settings_write_json(void)
+// Builds a cJSON object from the in-memory settings. Caller owns/deletes it.
+// Shared by SPIFFS save and SD backup so the field list lives in one place.
+static cJSON *settings_to_json(void)
 {
-    if (!settings_mount_spiffs()) return false;
     cJSON *root = cJSON_CreateObject();
-    if (!root) return false;
+    if (!root) return NULL;
     cJSON_AddNumberToObject(root, "brightness", brightness);
     cJSON_AddNumberToObject(root, "display_timeout_ms", (double)display_timeout_ms);
     cJSON_AddBoolToObject(root, "sound_enabled", sound_enabled);
@@ -153,58 +157,22 @@ static bool settings_write_json(void)
     cJSON_AddNumberToObject(root, "watchface_bg", watchface_bg);
     cJSON_AddStringToObject(root, "signalk_host", signalk_host);
     cJSON_AddNumberToObject(root, "signalk_port", (double)signalk_port);
-
-    char *json_str = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    if (!json_str) return false;
-
-    FILE *f = fopen(SETTINGS_FILE, "w");
-    if (!f) {
-        ESP_LOGE(TAG, "Failed to open %s for write", SETTINGS_FILE);
-        cJSON_free(json_str);
-        return false;
-    }
-    size_t expected = strlen(json_str);
-    size_t n = fwrite(json_str, 1, expected, f);
-    fclose(f);
-    cJSON_free(json_str);
-    if (n != expected) {
-        ESP_LOGE(TAG, "Partial write to %s (%u/%u bytes) — removing corrupt file",
-                 SETTINGS_FILE, (unsigned)n, (unsigned)expected);
-        remove(SETTINGS_FILE);
-        return false;
-    }
-    ESP_LOGI(TAG, "Settings saved to %s", SETTINGS_FILE);
-    return true;
+    cJSON_AddBoolToObject(root, "sd_logging_enabled", sd_logging_enabled);
+    return root;
 }
 
-static bool settings_read_json(void)
+// Applies fields from a parsed JSON object onto the in-memory settings, then
+// deletes it (takes ownership either way — even on a NULL/garbage object).
+// Shared by SPIFFS load and SD restore: each field is looked up and type-
+// checked individually, so a field that's absent or the wrong type is simply
+// skipped, leaving whatever value is already in memory. This is what makes
+// loading/restoring an old (or newer) settings file safe — missing fields
+// don't get zeroed, and unknown extra fields are silently ignored. Clamp
+// numerics before narrowing — a corrupted JSON with brightness:300 would
+// otherwise wrap to 44 and silently behave wrong.
+static bool settings_from_json(cJSON *root)
 {
-    if (!settings_mount_spiffs()) return false;
-    struct stat st;
-    if (stat(SETTINGS_FILE, &st) != 0 || st.st_size <= 0) {
-        ESP_LOGW(TAG, "Settings file not found; using defaults");
-        return false;
-    }
-    FILE *f = fopen(SETTINGS_FILE, "r");
-    if (!f) {
-        ESP_LOGE(TAG, "Failed to open %s for read", SETTINGS_FILE);
-        return false;
-    }
-    char *buf = (char*)malloc(st.st_size + 1);
-    if (!buf) { fclose(f); return false; }
-    size_t n = fread(buf, 1, st.st_size, f);
-    fclose(f);
-    buf[n] = '\0';
-    cJSON *root = cJSON_Parse(buf);
-    free(buf);
-    if (!root) {
-        ESP_LOGE(TAG, "Failed to parse JSON settings");
-        return false;
-    }
-    // Optional fields; keep defaults if missing. Clamp numerics before
-    // narrowing — a corrupted JSON with brightness:300 would otherwise
-    // wrap to 44 and silently behave wrong.
+    if (!root) return false;
     cJSON *j;
     j = cJSON_GetObjectItem(root, "brightness");
     if (cJSON_IsNumber(j)) {
@@ -256,10 +224,192 @@ static bool settings_read_json(void)
         int p = (int)j->valuedouble;
         if (p >= 1 && p <= 65535) signalk_port = (uint16_t)p;
     }
+    j = cJSON_GetObjectItem(root, "sd_logging_enabled");
+    if (cJSON_IsBool(j)) sd_logging_enabled = cJSON_IsTrue(j);
     cJSON_Delete(root);
     // Apply to hardware where relevant
     bsp_display_brightness_set(brightness);
-    ESP_LOGI(TAG, "Settings loaded: br=%u, to=%u, sound=%d", (unsigned)brightness, (unsigned)display_timeout_ms, (int)sound_enabled);
+    ESP_LOGI(TAG, "Settings applied: br=%u, to=%u, sound=%d", (unsigned)brightness, (unsigned)display_timeout_ms, (int)sound_enabled);
+    return true;
+}
+
+static bool settings_write_json(void)
+{
+    if (!settings_mount_spiffs()) return false;
+    cJSON *root = settings_to_json();
+    if (!root) return false;
+
+    char *json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!json_str) return false;
+
+    FILE *f = fopen(SETTINGS_FILE, "w");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open %s for write", SETTINGS_FILE);
+        cJSON_free(json_str);
+        return false;
+    }
+    size_t expected = strlen(json_str);
+    size_t n = fwrite(json_str, 1, expected, f);
+    fclose(f);
+    cJSON_free(json_str);
+    if (n != expected) {
+        ESP_LOGE(TAG, "Partial write to %s (%u/%u bytes) — removing corrupt file",
+                 SETTINGS_FILE, (unsigned)n, (unsigned)expected);
+        remove(SETTINGS_FILE);
+        return false;
+    }
+    ESP_LOGI(TAG, "Settings saved to %s", SETTINGS_FILE);
+    return true;
+}
+
+static bool settings_read_json(void)
+{
+    if (!settings_mount_spiffs()) return false;
+    struct stat st;
+    if (stat(SETTINGS_FILE, &st) != 0 || st.st_size <= 0) {
+        ESP_LOGW(TAG, "Settings file not found; using defaults");
+        return false;
+    }
+    FILE *f = fopen(SETTINGS_FILE, "r");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open %s for read", SETTINGS_FILE);
+        return false;
+    }
+    char *buf = (char*)malloc(st.st_size + 1);
+    if (!buf) { fclose(f); return false; }
+    size_t n = fread(buf, 1, st.st_size, f);
+    fclose(f);
+    buf[n] = '\0';
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) {
+        ESP_LOGE(TAG, "Failed to parse JSON settings");
+        return false;
+    }
+    if (!settings_from_json(root)) return false;
+    ESP_LOGI(TAG, "Settings loaded from %s", SETTINGS_FILE);
+    return true;
+}
+
+// ── SD-card backup/restore ──────────────────────────────────────────────────
+// Manual only (driven from the Backup & Restore screen) — a single snapshot
+// file at the SD card root, overwritten each time you back up; there's only
+// ever one. Filename respects the firmware's 8.3 short-name constraint
+// (FF_USE_LFN == 0): "settings" (8 chars) + "bak" (3 chars).
+#define SD_BACKUP_FILE BSP_SD_MOUNT_POINT "/settings.bak"
+
+// sd_logger may already have the card mounted (and keeps it mounted for the
+// whole boot session) and bsp_sdcard_mount() has no double-mount guard, so we
+// detect existing-mount state via the BSP's exposed handle and only mount/
+// unmount what we ourselves are responsible for.
+static bool sd_acquire(bool *we_mounted)
+{
+    *we_mounted = (bsp_sdcard == NULL);
+    if (*we_mounted && bsp_sdcard_mount() != ESP_OK) return false;
+    return true;
+}
+
+static void sd_release(bool we_mounted)
+{
+    if (we_mounted) bsp_sdcard_unmount();
+}
+
+bool settings_sd_backup_exists(void)
+{
+    bool we_mounted;
+    if (!sd_acquire(&we_mounted)) return false;
+    struct stat st;
+    bool exists = (stat(SD_BACKUP_FILE, &st) == 0 && st.st_size > 0);
+    sd_release(we_mounted);
+    return exists;
+}
+
+bool settings_backup_to_sd(void)
+{
+    bool we_mounted;
+    if (!sd_acquire(&we_mounted)) return false;
+
+    cJSON *root = settings_to_json();
+    if (root) {
+        // Folded in here (not in settings_to_json) so SPIFFS persistence is
+        // unaffected — saved Wi-Fi networks live in wifi_manager's own NVS
+        // namespace, not in the regular settings store. Without this, restoring
+        // a backup after a reflash would still mean re-typing every password.
+        cJSON *nets = wifi_manager_export_networks();
+        if (nets) cJSON_AddItemToObject(root, "wifi_networks", nets);
+    }
+    char *json_str = root ? cJSON_PrintUnformatted(root) : NULL;
+    if (root) cJSON_Delete(root);
+    if (!json_str) {
+        sd_release(we_mounted);
+        return false;
+    }
+
+    bool ok = false;
+    FILE *f = fopen(SD_BACKUP_FILE, "w");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open %s for write", SD_BACKUP_FILE);
+    } else {
+        size_t expected = strlen(json_str);
+        size_t n = fwrite(json_str, 1, expected, f);
+        fclose(f);
+        ok = (n == expected);
+        if (!ok) {
+            ESP_LOGE(TAG, "Partial write to %s — removing corrupt file", SD_BACKUP_FILE);
+            remove(SD_BACKUP_FILE);
+        }
+    }
+    cJSON_free(json_str);
+    sd_release(we_mounted);
+    if (ok) ESP_LOGI(TAG, "Settings backed up to %s", SD_BACKUP_FILE);
+    return ok;
+}
+
+bool settings_restore_from_sd(void)
+{
+    bool we_mounted;
+    if (!sd_acquire(&we_mounted)) return false;
+
+    struct stat st;
+    cJSON *root = NULL;
+    if (stat(SD_BACKUP_FILE, &st) == 0 && st.st_size > 0) {
+        FILE *f = fopen(SD_BACKUP_FILE, "r");
+        if (f) {
+            char *buf = (char*)malloc(st.st_size + 1);
+            if (buf) {
+                size_t n = fread(buf, 1, st.st_size, f);
+                buf[n] = '\0';
+                root = cJSON_Parse(buf);
+                free(buf);
+            }
+            fclose(f);
+        }
+    }
+    sd_release(we_mounted);
+
+    if (!root) {
+        ESP_LOGW(TAG, "No usable settings backup at %s", SD_BACKUP_FILE);
+        return false;
+    }
+
+    // settings_from_json() takes ownership of root (always deletes it) — pull
+    // wifi_networks out first so it survives to be applied separately below.
+    cJSON *nets = cJSON_DetachItemFromObject(root, "wifi_networks");
+    if (!settings_from_json(root)) {
+        cJSON_Delete(nets);
+        return false;
+    }
+    if (nets) {
+        wifi_manager_import_networks(nets);
+        cJSON_Delete(nets);
+    }
+
+    ESP_LOGI(TAG, "Settings restored from %s", SD_BACKUP_FILE);
+    // Apply immediately so a manual restore takes visible effect right away
+    // (not just after a reboot), and persist to SPIFFS so it survives one.
+    apply_tz();
+    settings_write_json();
     return true;
 }
 
@@ -413,6 +563,7 @@ static void apply_defaults(void)
     strncpy(signalk_host, DEFAULT_SIGNALK_HOST, sizeof(signalk_host) - 1);
     signalk_host[sizeof(signalk_host) - 1] = '\0';
     signalk_port = DEFAULT_SIGNALK_PORT;
+    sd_logging_enabled = DEFAULT_SD_LOGGING_ENABLED;
 }
 
 bool settings_reset_defaults(void)
@@ -452,6 +603,18 @@ void settings_set_wifi_enabled(bool enabled)
 bool settings_get_wifi_enabled(void)
 {
     return wifi_enabled;
+}
+
+void settings_set_sd_logging_enabled(bool enabled)
+{
+    if (sd_logging_enabled == enabled) return;
+    sd_logging_enabled = enabled;
+    schedule_save();
+}
+
+bool settings_get_sd_logging_enabled(void)
+{
+    return sd_logging_enabled;
 }
 
 int settings_get_watchface_style(void)

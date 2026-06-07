@@ -20,6 +20,7 @@
 #include "wifi_manager.h"
 #include "ntp_sync.h"
 #include "signalk_client.h"
+#include "sd_logger.h"
 
 static const char *TAG = "MAIN";
 
@@ -67,12 +68,24 @@ extern "C" void app_main(void) {
 
   settings_init();
 
+  // Reads settings_get_sd_logging_enabled() — must come after settings_init().
+  // Mirrors all ESP_LOG output to /sdcard/logs/ for this boot session when enabled.
+  sd_logger_init();
+
   wifi_manager_init();
   ntp_sync_init();
   signalk_client_init();
-  // Try saved networks — if one connects, ntp_sync fires automatically,
-  // syncs the RTC, then calls wifi_manager_release() to stop the radio.
-  wifi_manager_auto_connect();
+  // Respect the user's WiFi permission — only attempt a boot-time connect
+  // (for NTP sync etc.) when they've allowed it; otherwise release the
+  // radio that wifi_manager_init() just started so we boot in the "off"
+  // steady state described in the README.
+  if (settings_get_wifi_enabled()) {
+      // Try saved networks — if one connects, ntp_sync fires automatically,
+      // syncs the RTC, then calls wifi_manager_release() to stop the radio.
+      wifi_manager_auto_connect();
+  } else {
+      wifi_manager_release();
+  }
 
   // UI task calls display_manager_init() after creating the screen.
 

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include "lvgl.h"
 #include "storage_file_explorer.h"
+#include "setting_backup_screen.h"
 #include "settings_menu_screen.h"
 #include "esp_log.h"
 
@@ -39,7 +40,12 @@ static void show_toast(const char* text)
     lv_obj_update_layout(toast);
     lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, 0, -20);
 
-    (void)lv_timer_create(toast_timer_cb, 1200, toast);
+    // One-shot: lv_timer_create() defaults to infinite repeats, which would
+    // fire toast_timer_cb again 1200ms after it already deleted `toast` —
+    // a use-after-free that crashes once the freed lv_obj_t memory gets
+    // reused (this was the cause of the LoadProhibited crash in here).
+    lv_timer_t* toast_timer = lv_timer_create(toast_timer_cb, 1200, toast);
+    lv_timer_set_repeat_count(toast_timer, 1);
 }
 
 static void screen_events(lv_event_t* e)
@@ -133,6 +139,14 @@ static void confirm_format(lv_event_t* e)
 }
 
 
+static void toggle_sd_logging(lv_event_t* e)
+{
+    lv_obj_t* sw = lv_event_get_target(e);
+    bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    settings_set_sd_logging_enabled(on);
+    show_toast("Restart to apply");
+}
+
 static void show_spiffs_files(lv_event_t* e)
 {
     (void)e;
@@ -142,6 +156,18 @@ static void show_spiffs_files(lv_event_t* e)
     if (tile) {
         lv_obj_clean(tile);
         storage_file_explorer_screen_create(tile);
+        ui_dynamic_subtile_show();
+    }
+}
+
+static void open_backup_restore(lv_event_t* e)
+{
+    (void)e;
+    lv_indev_wait_release(lv_indev_active());
+    lv_obj_t* tile = ui_dynamic_subtile_acquire();
+    if (tile) {
+        lv_obj_clean(tile);
+        setting_backup_screen_create(tile);
         ui_dynamic_subtile_show();
     }
 }
@@ -183,6 +209,21 @@ void setting_storage_screen_create(lv_obj_t* parent)
     lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(content, LV_FLEX_ALIGN_SPACE_AROUND, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
 
+    lv_obj_t* sd_log_row = lv_obj_create(content);
+    lv_obj_remove_style_all(sd_log_row);
+    lv_obj_set_size(sd_log_row, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_all(sd_log_row, 8, 0);
+    lv_obj_set_flex_flow(sd_log_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(sd_log_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t* sd_log_lbl = lv_label_create(sd_log_row);
+    lv_obj_set_style_text_font(sd_log_lbl, &font_normal_26, 0);
+    lv_label_set_text(sd_log_lbl, "Log to SD Card");
+    lv_obj_t* sd_log_switch = lv_switch_create(sd_log_row);
+    lv_obj_set_size(sd_log_switch, 120, 50);
+    if (settings_get_sd_logging_enabled()) lv_obj_add_state(sd_log_switch, LV_STATE_CHECKED);
+    else lv_obj_clear_state(sd_log_switch, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sd_log_switch, toggle_sd_logging, LV_EVENT_VALUE_CHANGED, NULL);
+
     lv_obj_t* btn_restore = lv_btn_create(content);
     lv_obj_set_size(btn_restore, lv_pct(100), 60);
     lv_obj_add_event_cb(btn_restore, confirm_restore, LV_EVENT_CLICKED, NULL);
@@ -203,6 +244,13 @@ void setting_storage_screen_create(lv_obj_t* parent)
     lv_obj_t* lbl_l = lv_label_create(btn_list);
     lv_obj_set_style_text_font(lbl_l, &font_bold_28, 0);
     lv_label_set_text(lbl_l, "View Files");
+
+    lv_obj_t* btn_backup = lv_btn_create(content);
+    lv_obj_set_size(btn_backup, lv_pct(100), 60);
+    lv_obj_add_event_cb(btn_backup, open_backup_restore, LV_EVENT_CLICKED, NULL);
+    lv_obj_t* lbl_bk = lv_label_create(btn_backup);
+    lv_obj_set_style_text_font(lbl_bk, &font_bold_28, 0);
+    lv_label_set_text(lbl_bk, "Backup & Restore");
 }
 
 static void on_delete(lv_event_t* e)

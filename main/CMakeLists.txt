@@ -3,7 +3,7 @@ idf_component_register(
         lwmalloc.c
         main.cpp
     INCLUDE_DIRS "."
-    REQUIRES gui sensors settings bsp_extra esp_event audio_alert nvs_flash wifi_manager ntp_sync
+    REQUIRES gui sensors settings bsp_extra esp_event audio_alert nvs_flash wifi_manager ntp_sync sd_logger
 )
 
 ## enable the next line to upload the spiffs content

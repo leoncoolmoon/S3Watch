@@ -41,7 +41,13 @@ static void on_sntp_sync(struct timeval *tv)
     // Sync done — shut WiFi radio off to save power.
     // esp_wifi_stop() must not be called from the SNTP/lwIP callback context
     // (it tears down lwIP from within lwIP). Use a one-shot task instead.
-    xTaskCreate(wifi_release_task, "wifi_rel", 2048, NULL, 5, NULL);
+    // 4096, not 2048: wifi_manager_release() -> esp_wifi_stop() is a deep,
+    // log-chatty call chain ("flush txq"/"stop sw txq"/"lmac stop hw txq"/...),
+    // and with SD logging on every one of those ESP_LOG calls runs through
+    // sd_log_vprintf's hook chain (malloc+vsnprintf+stream-send+free, then the
+    // original vprintf's own vsnprintf) instead of the shallow default vprintf
+    // — that extra per-call depth is what overflowed this task at 2048.
+    xTaskCreate(wifi_release_task, "wifi_rel", 4096, NULL, 5, NULL);
 }
 
 static void wifi_connected_cb(void *arg, esp_event_base_t base,

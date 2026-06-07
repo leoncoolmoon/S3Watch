@@ -7,6 +7,7 @@
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "cJSON.h"
 #include <string.h>
 
@@ -16,6 +17,16 @@ static const char *TAG = "WIFI_MGR";
 
 ESP_EVENT_DEFINE_BASE(WIFI_MANAGER_EVENT_BASE);
 
+// Serializes esp_wifi_*() control calls (start/stop/scan_start/connect/
+// disconnect). The driver isn't safe against concurrent control calls from
+// independent tasks — and this app genuinely has them: ntp_sync spins up a
+// one-shot task to release() the radio after sync completes, the Wi-Fi scan
+// screen spins up its own task to wake()+scan(), and either can fire while
+// the other is mid-flight (e.g. opening Wi-Fi settings just after enabling
+// Wi-Fi races release-after-NTP-sync against wake+scan — esp_wifi_stop()
+// landing mid-scan corrupts driver state and crashes). Recursive because
+// wifi_manager_auto_connect() calls wifi_manager_connect() while "holding" it.
+static SemaphoreHandle_t  s_lock         = NULL;
 static esp_netif_t       *s_netif        = NULL;
 static bool               s_initialized  = false;
 static bool               s_radio_running = false;
@@ -120,6 +131,8 @@ esp_err_t wifi_manager_init(void)
 {
     if (s_initialized) return ESP_OK;
 
+    s_lock = xSemaphoreCreateRecursiveMutex();
+
     ESP_ERROR_CHECK(esp_netif_init());
     s_netif = esp_netif_create_default_wifi_sta();
 
@@ -147,7 +160,10 @@ esp_err_t wifi_manager_scan(void)
         .show_hidden = false,
         .scan_type   = WIFI_SCAN_TYPE_ACTIVE,
     };
-    return esp_wifi_scan_start(&cfg, false);
+    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
+    esp_err_t err = esp_wifi_scan_start(&cfg, false);
+    xSemaphoreGiveRecursive(s_lock);
+    return err;
 }
 
 int wifi_manager_get_scan_results(wifi_manager_ap_t *out, int max_count)
@@ -166,10 +182,12 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password, bool save
     strncpy((char*)cfg.sta.password, password, sizeof(cfg.sta.password) - 1);
     cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
+    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
     esp_wifi_disconnect();
     esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "set_config failed: %s", esp_err_to_name(err));
+        xSemaphoreGiveRecursive(s_lock);
         return err;
     }
     err = esp_wifi_connect();
@@ -177,8 +195,10 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password, bool save
         ESP_LOGE(TAG, "Connect failed: %s", esp_err_to_name(err));
         esp_event_post(WIFI_MANAGER_EVENT_BASE, WIFI_MGR_EVT_CONNECT_FAILED,
                        NULL, 0, 0);
+        xSemaphoreGiveRecursive(s_lock);
         return err;
     }
+    xSemaphoreGiveRecursive(s_lock);
 
     if (save) {
         cJSON *arr = load_networks_json();
@@ -232,6 +252,44 @@ esp_err_t wifi_manager_auto_connect(void)
     return ret;
 }
 
+cJSON *wifi_manager_export_networks(void)
+{
+    cJSON *arr = load_networks_json();
+    if (cJSON_GetArraySize(arr) == 0) {
+        cJSON_Delete(arr);
+        return NULL;
+    }
+    return arr;
+}
+
+bool wifi_manager_import_networks(const cJSON *arr)
+{
+    if (!cJSON_IsArray(arr)) return false;
+
+    cJSON *out = cJSON_CreateArray();
+    if (!out) return false;
+
+    int sz = cJSON_GetArraySize((cJSON *)arr);
+    for (int i = 0; i < sz && cJSON_GetArraySize(out) < WIFI_MANAGER_MAX_NETWORKS; i++) {
+        cJSON *item = cJSON_GetArrayItem((cJSON *)arr, i);
+        cJSON *s    = cJSON_GetObjectItem(item, "ssid");
+        cJSON *p    = cJSON_GetObjectItem(item, "pass");
+        if (!cJSON_IsString(s) || !cJSON_IsString(p)) continue;
+
+        cJSON *entry = cJSON_CreateObject();
+        if (!entry) continue;
+        cJSON_AddStringToObject(entry, "ssid", s->valuestring);
+        cJSON_AddStringToObject(entry, "pass", p->valuestring);
+        cJSON_AddItemToArray(out, entry);
+    }
+
+    esp_err_t err = save_networks_json(out);
+    int count = cJSON_GetArraySize(out);
+    cJSON_Delete(out);
+    if (err == ESP_OK) ESP_LOGI(TAG, "Imported %d saved network(s)", count);
+    return err == ESP_OK;
+}
+
 esp_err_t wifi_manager_forget(const char *ssid)
 {
     cJSON *arr = load_networks_json();
@@ -255,12 +313,19 @@ int8_t wifi_manager_connected_rssi(void)      { return s_rssi; }
 esp_err_t wifi_manager_release(void)
 {
     if (!s_initialized) return ESP_OK;
-    if (!s_radio_running) return ESP_OK;
+
+    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
+    if (!s_radio_running) {
+        xSemaphoreGiveRecursive(s_lock);
+        return ESP_OK;
+    }
     s_connected     = false;
     s_radio_running = false;
     s_ssid[0]       = '\0';
     esp_wifi_disconnect();
     esp_err_t err = esp_wifi_stop();
+    xSemaphoreGiveRecursive(s_lock);
+
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "Radio stopped (release)");
     }
@@ -270,11 +335,17 @@ esp_err_t wifi_manager_release(void)
 esp_err_t wifi_manager_wake(void)
 {
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
-    if (s_radio_running) return ESP_OK;
+
+    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
+    if (s_radio_running) {
+        xSemaphoreGiveRecursive(s_lock);
+        return ESP_OK;
+    }
     esp_err_t err = esp_wifi_start();
     if (err == ESP_OK) {
         s_radio_running = true;
         ESP_LOGI(TAG, "Radio started (wake)");
     }
+    xSemaphoreGiveRecursive(s_lock);
     return err;
 }

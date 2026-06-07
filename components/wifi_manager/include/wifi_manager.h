@@ -3,6 +3,12 @@
 #include "esp_err.h"
 #include "esp_event.h"
 
+// Forward-declared rather than #include "cJSON.h" — keeps this header (and
+// every component that includes it, e.g. gui) from needing cJSON on its
+// include path just for two backup/restore-only functions. settings.c, the
+// only real consumer, already has full cJSON visibility of its own.
+typedef struct cJSON cJSON;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -42,6 +48,16 @@ esp_err_t wifi_manager_auto_connect(void);
 
 // Forget a saved network by SSID.
 esp_err_t wifi_manager_forget(const char *ssid);
+
+// Export/import the saved-network list — for settings backup/restore, so a
+// reflash doesn't mean re-typing every saved network's password by hand.
+// Export returns a new cJSON array of {"ssid","pass"} objects (caller owns —
+// must cJSON_Delete), or NULL if nothing is saved. Import replaces the saved
+// list with arr's entries (non-object/non-string entries skipped, capped at
+// WIFI_MANAGER_MAX_NETWORKS) and persists to NVS immediately; arr itself is
+// left untouched (caller retains ownership).
+cJSON *wifi_manager_export_networks(void);
+bool   wifi_manager_import_networks(const cJSON *arr);
 
 bool        wifi_manager_is_connected(void);
 const char *wifi_manager_connected_ssid(void);

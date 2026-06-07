@@ -401,6 +401,11 @@ void signalk_client_start(void) {
         set_state(SIGNALK_STATE_NO_CONFIG);
         return;
     }
+    if (!settings_get_wifi_enabled()) {
+        ESP_LOGI(TAG, "start: WiFi permission off — refusing to wake radio");
+        set_state(SIGNALK_STATE_WIFI_DISABLED);
+        return;
+    }
     ESP_LOGI(TAG, "start: waking WiFi for SignalK");
     s_want_wifi = true;
     set_state(SIGNALK_STATE_WIFI_UP);

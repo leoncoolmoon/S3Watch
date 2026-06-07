@@ -11,6 +11,7 @@
 #include "world_clock.h"
 #include "stopwatch.h"
 #include "alarm_clock.h"
+#include "calendar_app.h"
 #include "esp_log.h"
 #include "lvgl.h"
 
@@ -32,17 +33,20 @@ LV_IMAGE_DECLARE(image_signalk_icon);
 LV_IMAGE_DECLARE(image_worldclock_icon);
 LV_IMAGE_DECLARE(image_stopwatch_icon);
 LV_IMAGE_DECLARE(image_alarmclock_icon);
+LV_IMAGE_DECLARE(image_calendar_icon);
 
 static void launch_signalk(lv_obj_t *tile)      { signalk_dashboard_create(tile); }
 static void launch_world_clock(lv_obj_t *tile)  { world_clock_create(tile); }
 static void launch_stopwatch(lv_obj_t *tile)    { stopwatch_create(tile); }
 static void launch_alarm(lv_obj_t *tile)        { alarm_clock_create(tile); }
+static void launch_calendar(lv_obj_t *tile)     { calendar_app_create(tile); }
 
 static const app_entry_t s_apps[] = {
     { "SignalK",     &image_signalk_icon,    launch_signalk     },
     { "World Clock", &image_worldclock_icon, launch_world_clock },
     { "Stopwatch",   &image_stopwatch_icon,  launch_stopwatch   },
     { "Alarm",       &image_alarmclock_icon, launch_alarm       },
+    { "Calendar",    &image_calendar_icon,   launch_calendar    },
 };
 static const int s_app_count = sizeof(s_apps) / sizeof(s_apps[0]);
 
@@ -123,18 +127,21 @@ void app_picker_create(lv_obj_t *parent)
     lv_obj_set_width(title, lv_pct(100));
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
 
-    // Icon grid
+    // Icon grid — scrollable so the list can grow past two rows without
+    // clipping (five apps wrap to a 2-2-1 layout taller than the tile).
     lv_obj_t *grid = lv_obj_create(screen);
     lv_obj_remove_style_all(grid);
-    lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(grid, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_width(grid, lv_pct(100));
+    lv_obj_set_flex_grow(grid, 1);
+    lv_obj_set_scroll_dir(grid, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_pad_left(grid, 12, 0);
     lv_obj_set_style_pad_right(grid, 12, 0);
     lv_obj_set_style_pad_row(grid, 12, 0);
     lv_obj_set_style_pad_column(grid, 12, 0);
     lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
 
     for (int i = 0; i < s_app_count; i++) {
         const app_entry_t *app = &s_apps[i];

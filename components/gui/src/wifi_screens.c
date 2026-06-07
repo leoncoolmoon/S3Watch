@@ -1,4 +1,6 @@
 #include "wifi_screens.h"
+#include "ui.h"
+#include "ip_picker.h"
 #include "scroll_keyboard.h"
 #include "wifi_manager.h"
 #include "ntp_sync.h"
@@ -134,28 +136,6 @@ static void release_task(void *arg)
     vTaskDelete(NULL);
 }
 
-static void scan_close(scan_ctx_t *ctx)
-{
-    esp_event_handler_instance_unregister(WIFI_MANAGER_EVENT_BASE,
-                                          WIFI_MGR_EVT_SCAN_DONE,
-                                          ctx->scan_handler);
-    esp_event_handler_instance_unregister(WIFI_MANAGER_EVENT_BASE,
-                                          WIFI_MGR_EVT_CONNECTED,
-                                          ctx->conn_handler);
-    // If user backed out without connecting, shut the radio down off the LVGL task.
-    if (!wifi_manager_is_connected()) {
-        xTaskCreate(release_task, "wifi_rel", 2048, NULL, 5, NULL);
-    }
-    lv_obj_del(ctx->screen);
-    free(ctx);
-}
-
-static void scan_back_cb(lv_event_t *e)
-{
-    scan_ctx_t *ctx = (scan_ctx_t*)lv_event_get_user_data(e);
-    scan_close(ctx);
-}
-
 static void ap_click_cb(lv_event_t *e)
 {
     lv_obj_t    *btn = lv_event_get_target(e);
@@ -261,9 +241,55 @@ static void wake_and_scan_task(void *arg)
     vTaskDelete(NULL);
 }
 
+// Runs whenever ctx->screen is actually destroyed — whether via scan_back_cb's
+// async delete, or because a gesture swept the dynamic settings subtile away
+// (ui_tileview's tileview_change_cb deletes it without calling back into us).
+// Doing all teardown here, exactly once, regardless of exit path is what makes
+// this safe: the alternative (cleanup tied to one button) left the ESP event
+// handlers registered — and any lv_async_call they'd already queued pointing
+// at ctx — dangling after a gesture-based exit, a races-with-serial-attached
+// use-after-free.
+static void scan_on_delete(lv_event_t *e)
+{
+    scan_ctx_t *ctx = (scan_ctx_t*)lv_event_get_user_data(e);
+    esp_event_handler_instance_unregister(WIFI_MANAGER_EVENT_BASE,
+                                          WIFI_MGR_EVT_SCAN_DONE,
+                                          ctx->scan_handler);
+    esp_event_handler_instance_unregister(WIFI_MANAGER_EVENT_BASE,
+                                          WIFI_MGR_EVT_CONNECTED,
+                                          ctx->conn_handler);
+    // Cancel any in-flight async updates that captured this ctx — otherwise a
+    // scan/connect event that fired moments ago could still run do_scan_update
+    // / do_connected_update against memory we're about to free.
+    lv_async_call_cancel(do_scan_update, ctx);
+    lv_async_call_cancel(do_connected_update, ctx);
+    // If user backed out without connecting, shut the radio down off the LVGL task.
+    if (!wifi_manager_is_connected()) {
+        // 4096, not 2048 — see the matching comment in ntp_sync.c's
+        // wifi_release_task: esp_wifi_stop()'s log-chatty teardown chain
+        // overflows a 2048-byte stack once SD logging routes every ESP_LOG
+        // call through sd_log_vprintf's deeper hook chain.
+        xTaskCreate(release_task, "wifi_rel", 4096, NULL, 5, NULL);
+    }
+    free(ctx);
+}
+
+static void scan_back_cb(lv_event_t *e)
+{
+    scan_ctx_t *ctx = (scan_ctx_t*)lv_event_get_user_data(e);
+    // Defer — we're inside a click event on a button that is a descendant of
+    // ctx->screen; synchronous lv_obj_del here would be a use-after-free.
+    // Teardown happens in scan_on_delete once the object is actually gone.
+    lv_obj_del_async(ctx->screen);
+}
+
 static void rescan_cb(lv_event_t *e)
 {
     scan_ctx_t *ctx = (scan_ctx_t*)lv_event_get_user_data(e);
+    if (!settings_get_wifi_enabled()) {
+        lv_label_set_text(ctx->status_label, "Wi-Fi is off");
+        return;
+    }
     lv_label_set_text(ctx->status_label, "Scanning...");
     xTaskCreate(wake_and_scan_task, "wifi_scan", 3072, NULL, 5, NULL);
 }
@@ -274,6 +300,7 @@ void wifi_scan_screen_open(lv_obj_t *parent)
     if (!ctx) return;
 
     ctx->screen = make_screen(parent);
+    lv_obj_add_event_cb(ctx->screen, scan_on_delete, LV_EVENT_DELETE, ctx);
 
     // Header
     lv_obj_t *hdr  = make_header(ctx->screen, "Wi-Fi", scan_back_cb, ctx);
@@ -315,150 +342,250 @@ void wifi_scan_screen_open(lv_obj_t *parent)
         wifi_manager_ap_t tmp[1];
         if (wifi_manager_get_scan_results(tmp, 1) > 0) populate_list(ctx);
     }
-    // Wake radio and scan on a separate task so the LVGL task isn't blocked
-    // by esp_wifi_start() which can take 100-200 ms.
-    xTaskCreate(wake_and_scan_task, "wifi_scan", 3072, NULL, 5, NULL);
+    if (!settings_get_wifi_enabled()) {
+        // Respect the user's WiFi permission — don't wake the radio just
+        // because they opened the scan screen; they must enable WiFi first.
+        lv_label_set_text(ctx->status_label, "Wi-Fi is off");
+    } else {
+        // Wake radio and scan on a separate task so the LVGL task isn't blocked
+        // by esp_wifi_start() which can take 100-200 ms.
+        xTaskCreate(wake_and_scan_task, "wifi_scan", 3072, NULL, 5, NULL);
+    }
 }
 
 // ── NTP settings screen ───────────────────────────────────────────────────────
-
-typedef struct { lv_obj_t *screen; } ntp_ctx_t;
-
-static void ntp_back_cb(lv_event_t *e)
-{
-    ntp_ctx_t *ctx = (ntp_ctx_t*)lv_event_get_user_data(e);
-    lv_obj_del(ctx->screen);
-    free(ctx);
-}
+//
+// Mirrors setting_signalk_screen.c: a single "Server" row that opens a
+// chooser (Enter IP / Enter Hostname), reusing ip_picker / scroll_keyboard
+// for entry. No port row — NTP always uses the standard port.
 
 typedef struct {
     lv_obj_t *screen;
-    lv_obj_t *cur_label;
-} ntp_kb_ctx_t;
+    lv_obj_t *server_value;   // right-hand label on Server row
+} ntp_ctx_t;
 
-static void ntp_kb_done(const char *text, void *user_data)
-{
-    ntp_kb_ctx_t *ctx = (ntp_kb_ctx_t*)user_data;
-    if (text && text[0]) {
-        ntp_sync_set_server(text);
-        lv_label_set_text_fmt(ctx->cur_label, "Current: %s", text);
+static void ntp_on_delete(lv_event_t *e) {
+    ntp_ctx_t *ctx = (ntp_ctx_t *)lv_event_get_user_data(e);
+    if (ctx) free(ctx);
+}
+
+static void ntp_screen_events(lv_event_t *e) {
+    if (lv_event_get_code(e) == LV_EVENT_GESTURE &&
+        lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_RIGHT) {
+        lv_indev_wait_release(lv_indev_active());
+        ui_dynamic_subtile_close();
     }
-    // Defer teardown — see pw_done_cb. Screen owns the keyboard button whose
-    // click event we are currently inside.
-    lv_obj_del_async(ctx->screen);
-    free(ctx);
 }
 
-static void ntp_kb_cancel(void *user_data)
-{
-    ntp_kb_ctx_t *ctx = (ntp_kb_ctx_t*)user_data;
-    lv_obj_del_async(ctx->screen);
-    free(ctx);
+static void ntp_refresh_label(ntp_ctx_t *ctx) {
+    const char *s = ntp_sync_get_server();
+    lv_label_set_text(ctx->server_value, (s && s[0]) ? s : "Not set");
 }
 
-static void open_custom_ntp_kb(lv_obj_t *parent, lv_obj_t *cur_label)
-{
-    ntp_kb_ctx_t *ctx = calloc(1, sizeof(ntp_kb_ctx_t));
-    if (!ctx) return;
-    ctx->cur_label = cur_label;
-    ctx->screen    = make_screen(parent);
-    scroll_keyboard_create(ctx->screen, settings_get_ntp_server(),
-                           "NTP Server", ntp_kb_done, ntp_kb_cancel, ctx);
+// ── IP picker integration ────────────────────────────────────────────────
+
+static void ntp_ip_done(const char *ip_str, void *user) {
+    ntp_ctx_t *ctx = (ntp_ctx_t *)user;
+    ESP_LOGI(TAG, "NTP server IP set: %s", ip_str);
+    ntp_sync_set_server(ip_str);
+    ntp_refresh_label(ctx);
 }
 
-static void preset_click_cb(lv_event_t *e)
-{
-    const char *server = (const char*)lv_event_get_user_data(e);
-    ntp_sync_set_server(server);
-    // Update the current label — find it via the list's parent chain
-    lv_obj_t *btn = lv_event_get_target(e);
-    lv_obj_t *list = lv_obj_get_parent(btn);
-    lv_obj_t *scr  = lv_obj_get_parent(list);
-    // cur_label is the second child of scr (after header)
-    lv_obj_t *cur = lv_obj_get_child(scr, 1);
-    if (cur) lv_label_set_text_fmt(cur, "Current: %s", server);
+static void ntp_ip_cancel(void *user) { (void)user; }
+
+// ── Hostname keyboard integration ────────────────────────────────────────
+
+typedef struct {
+    lv_obj_t *kb_screen;
+    ntp_ctx_t *parent_ctx;
+} ntp_host_kb_ctx_t;
+
+static void ntp_host_kb_done(const char *text, void *user) {
+    ntp_host_kb_ctx_t *kb = (ntp_host_kb_ctx_t *)user;
+    if (text && text[0]) {
+        ESP_LOGI(TAG, "NTP server hostname set: %s", text);
+        ntp_sync_set_server(text);
+        ntp_refresh_label(kb->parent_ctx);
+    }
+    lv_obj_del_async(kb->kb_screen);
+    free(kb);
 }
 
-typedef struct { lv_obj_t *parent; lv_obj_t *cur_label; } custom_ntp_ctx_t;
+static void ntp_host_kb_cancel(void *user) {
+    ntp_host_kb_ctx_t *kb = (ntp_host_kb_ctx_t *)user;
+    lv_obj_del_async(kb->kb_screen);
+    free(kb);
+}
 
-static void custom_ntp_cb(lv_event_t *e)
-{
-    custom_ntp_ctx_t *c = (custom_ntp_ctx_t*)lv_event_get_user_data(e);
-    open_custom_ntp_kb(c->parent, c->cur_label);
+// ── Chooser overlay (Enter IP / Enter Hostname) ──────────────────────────
+
+typedef struct {
+    lv_obj_t *overlay;
+    ntp_ctx_t *parent_ctx;
+} ntp_chooser_ctx_t;
+
+static void ntp_overlay_close(ntp_chooser_ctx_t *c) {
+    lv_obj_del_async(c->overlay);
     free(c);
+}
+
+static void ntp_chooser_pick_ip(lv_event_t *e) {
+    ntp_chooser_ctx_t *c = (ntp_chooser_ctx_t *)lv_event_get_user_data(e);
+    ntp_ctx_t *ctx = c->parent_ctx;
+    lv_obj_t *parent = ctx->screen;
+    ntp_overlay_close(c);
+    // ip_picker creates a full-screen child of parent and self-deletes on
+    // Set or swipe-right.
+    ip_picker_create(parent, ntp_sync_get_server(), ntp_ip_done, ntp_ip_cancel, ctx);
+}
+
+static void ntp_chooser_pick_hostname(lv_event_t *e) {
+    ntp_chooser_ctx_t *c = (ntp_chooser_ctx_t *)lv_event_get_user_data(e);
+    ntp_ctx_t *ctx = c->parent_ctx;
+    lv_obj_t *parent = ctx->screen;
+    ntp_overlay_close(c);
+
+    ntp_host_kb_ctx_t *kb = (ntp_host_kb_ctx_t *)calloc(1, sizeof(ntp_host_kb_ctx_t));
+    if (!kb) return;
+    kb->parent_ctx = ctx;
+    kb->kb_screen = lv_obj_create(parent);
+    lv_obj_remove_style_all(kb->kb_screen);
+    lv_obj_set_size(kb->kb_screen, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(kb->kb_screen, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(kb->kb_screen, LV_OPA_COVER, 0);
+    scroll_keyboard_create(kb->kb_screen, ntp_sync_get_server(),
+                           "NTP Server", ntp_host_kb_done, ntp_host_kb_cancel, kb);
+}
+
+static void ntp_chooser_cancel(lv_event_t *e) {
+    ntp_chooser_ctx_t *c = (ntp_chooser_ctx_t *)lv_event_get_user_data(e);
+    ntp_overlay_close(c);
+}
+
+static lv_obj_t *ntp_chooser_button(lv_obj_t *parent, const char *txt,
+                                     lv_event_cb_t cb, void *user) {
+    lv_obj_t *b = lv_btn_create(parent);
+    lv_obj_set_size(b, 220, 60);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user);
+    lv_obj_t *l = lv_label_create(b);
+    lv_obj_set_style_text_font(l, &font_bold_28, 0);
+    lv_label_set_text(l, txt);
+    lv_obj_center(l);
+    return b;
+}
+
+static void ntp_open_chooser(ntp_ctx_t *ctx) {
+    ntp_chooser_ctx_t *c = (ntp_chooser_ctx_t *)calloc(1, sizeof(ntp_chooser_ctx_t));
+    if (!c) return;
+    c->parent_ctx = ctx;
+    c->overlay = lv_obj_create(ctx->screen);
+    lv_obj_remove_style_all(c->overlay);
+    lv_obj_set_size(c->overlay, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(c->overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(c->overlay, LV_OPA_COVER, 0);
+    lv_obj_set_flex_flow(c->overlay, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(c->overlay, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(c->overlay, 16, 0);
+
+    lv_obj_t *title = lv_label_create(c->overlay);
+    lv_obj_set_style_text_font(title, &font_bold_32, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_label_set_text(title, "Server");
+
+    ntp_chooser_button(c->overlay, "Enter IP",       ntp_chooser_pick_ip,       c);
+    ntp_chooser_button(c->overlay, "Enter Hostname", ntp_chooser_pick_hostname, c);
+    ntp_chooser_button(c->overlay, "Cancel",         ntp_chooser_cancel,        c);
+}
+
+// ── Row tap handler ───────────────────────────────────────────────────────
+
+static void ntp_on_server_row(lv_event_t *e) {
+    ntp_ctx_t *ctx = (ntp_ctx_t *)lv_event_get_user_data(e);
+    ntp_open_chooser(ctx);
+}
+
+// Row factory — copy of setting_signalk_screen's make_row, kept local so this
+// screen owns its layout choices.
+static lv_obj_t *ntp_make_row(lv_obj_t *parent, const char *icon,
+                               const char *label_txt, lv_event_cb_t cb,
+                               void *user) {
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_width(row, lv_pct(100));
+    lv_obj_set_height(row, 56);
+    lv_obj_set_style_bg_opa(row, LV_OPA_10, 0);
+    lv_obj_set_style_bg_color(row, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_radius(row, 12, 0);
+    lv_obj_set_style_pad_hor(row, 12, 0);
+    lv_obj_set_style_pad_ver(row, 6, 0);
+    lv_obj_set_style_margin_bottom(row, 8, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER);
+    lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    if (cb) lv_obj_add_event_cb(row, cb, LV_EVENT_CLICKED, user);
+
+    if (icon) {
+        lv_obj_t *isym = lv_label_create(row);
+        lv_obj_set_style_text_font(isym, &font_normal_28, 0);
+        lv_label_set_text(isym, icon);
+    }
+
+    lv_obj_t *l = lv_label_create(row);
+    lv_obj_set_style_text_font(l, &font_normal_28, 0);
+    lv_obj_set_style_pad_left(l, 10, 0);
+    lv_label_set_text(l, label_txt);
+    lv_obj_set_flex_grow(l, 1);
+
+    lv_obj_t *v = lv_label_create(row);
+    lv_obj_set_style_text_font(v, &font_bold_28, 0);
+    lv_label_set_text(v, "");
+    return v;
 }
 
 void ntp_settings_screen_open(lv_obj_t *parent)
 {
-    ntp_ctx_t *ctx = calloc(1, sizeof(ntp_ctx_t));
+    ntp_ctx_t *ctx = (ntp_ctx_t *)calloc(1, sizeof(ntp_ctx_t));
     if (!ctx) return;
 
-    ctx->screen = make_screen(parent);
-
-    make_header(ctx->screen, "NTP Server", ntp_back_cb, ctx);
-
-    lv_obj_t *cur_label = lv_label_create(ctx->screen);
-    lv_label_set_text_fmt(cur_label, "Current: %s", settings_get_ntp_server());
-    lv_obj_set_style_text_font(cur_label, &font_normal_26, 0);
-    lv_obj_set_style_text_color(cur_label, lv_color_hex(0x60D060), 0);
-    lv_obj_align(cur_label, LV_ALIGN_TOP_MID, 0, 58);
-
-    // Presets list
-    static const char *presets[] = {
-        "pool.ntp.org",
-        "time.cloudflare.com",
-        "time.google.com",
-        "time.apple.com",
-        NULL
-    };
-
-    lv_obj_t *list = lv_obj_create(ctx->screen);
-    lv_obj_remove_style_all(list);
-    lv_obj_set_size(list, lv_pct(100) - 16, lv_pct(100) - 130);
-    lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, -8);
-    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
-    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(list, 6, 0);
-
-    for (int i = 0; presets[i]; i++) {
-        lv_obj_t *row = lv_obj_create(list);
-        lv_obj_remove_style_all(row);
-        lv_obj_set_size(row, lv_pct(100), 52);
-        lv_obj_set_style_bg_color(row, lv_color_hex(0x1C1C1C), 0);
-        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(row, 10, 0);
-        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(row, preset_click_cb, LV_EVENT_CLICKED,
-                            (void*)presets[i]);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-
-        lv_obj_t *lbl = lv_label_create(row);
-        lv_label_set_text(lbl, presets[i]);
-        lv_obj_set_style_text_font(lbl, &font_normal_28, 0);
-        lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 12, 0);
+    static lv_style_t style;
+    static bool style_ready = false;
+    if (!style_ready) {
+        lv_style_init(&style);
+        lv_style_set_text_color(&style, lv_color_white());
+        lv_style_set_bg_color(&style, lv_color_black());
+        lv_style_set_bg_opa(&style, LV_OPA_COVER);
+        style_ready = true;
     }
 
-    // Custom entry row
-    lv_obj_t *custom = lv_obj_create(list);
-    lv_obj_remove_style_all(custom);
-    lv_obj_set_size(custom, lv_pct(100), 52);
-    lv_obj_set_style_bg_color(custom, lv_color_hex(0x1A2A3A), 0);
-    lv_obj_set_style_bg_opa(custom, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(custom, 10, 0);
-    lv_obj_add_flag(custom, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(custom, LV_OBJ_FLAG_SCROLLABLE);
+    ctx->screen = lv_obj_create(parent);
+    lv_obj_remove_style_all(ctx->screen);
+    lv_obj_add_style(ctx->screen, &style, 0);
+    lv_obj_set_size(ctx->screen, lv_pct(100), lv_pct(100));
+    lv_obj_add_flag(ctx->screen, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(ctx->screen, ntp_screen_events, LV_EVENT_GESTURE, ctx);
+    lv_obj_add_event_cb(ctx->screen, ntp_on_delete,      LV_EVENT_DELETE,  ctx);
 
-    lv_obj_t *clbl = lv_label_create(custom);
-    lv_label_set_text(clbl, "Custom...");
-    lv_obj_set_style_text_font(clbl, &font_normal_28, 0);
-    lv_obj_set_style_text_color(clbl, lv_color_hex(0x4090FF), 0);
-    lv_obj_align(clbl, LV_ALIGN_LEFT_MID, 12, 0);
+    lv_obj_t *title = lv_label_create(ctx->screen);
+    lv_obj_set_style_text_font(title, &font_bold_32, 0);
+    lv_label_set_text(title, "NTP Server");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
-    custom_ntp_ctx_t *cc = malloc(sizeof(custom_ntp_ctx_t));
-    if (cc) {
-        cc->parent    = parent;
-        cc->cur_label = cur_label;
-        lv_obj_add_event_cb(custom, custom_ntp_cb, LV_EVENT_CLICKED, cc);
-    }
+    lv_obj_t *content = lv_obj_create(ctx->screen);
+    lv_obj_remove_style_all(content);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_size(content, lv_pct(100), lv_pct(70));
+    lv_obj_align(content, LV_ALIGN_CENTER, 0, 30);
+    lv_obj_set_style_pad_left(content, 16, 0);
+    lv_obj_set_style_pad_right(content, 16, 0);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    // START so the first row is reachable by scroll (same gotcha as the main
+    // settings menu).
+    lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+
+    ctx->server_value = ntp_make_row(content, LV_SYMBOL_WIFI, "Server", ntp_on_server_row, ctx);
+
+    ntp_refresh_label(ctx);
 }

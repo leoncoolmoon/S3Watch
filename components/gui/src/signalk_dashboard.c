@@ -37,12 +37,13 @@ static bool value_fresh(const signalk_value_t *v) {
 
 static const char *state_text(signalk_state_t st) {
     switch (st) {
-    case SIGNALK_STATE_IDLE:       return "Idle";
-    case SIGNALK_STATE_NO_CONFIG:  return "Not configured";
-    case SIGNALK_STATE_WIFI_UP:    return "Connecting Wi-Fi…";
-    case SIGNALK_STATE_CONNECTING: return "Connecting…";
-    case SIGNALK_STATE_CONNECTED:  return "Connected";
-    case SIGNALK_STATE_ERROR:      return "Error";
+    case SIGNALK_STATE_IDLE:          return "Idle";
+    case SIGNALK_STATE_NO_CONFIG:     return "Not configured";
+    case SIGNALK_STATE_WIFI_DISABLED: return "Wi-Fi disabled";
+    case SIGNALK_STATE_WIFI_UP:       return "Connecting Wi-Fi…";
+    case SIGNALK_STATE_CONNECTING:    return "Connecting…";
+    case SIGNALK_STATE_CONNECTED:     return "Connected";
+    case SIGNALK_STATE_ERROR:         return "Error";
     }
     return "?";
 }

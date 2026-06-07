@@ -26,6 +26,17 @@ uint8_t settings_get_notify_volume(void);
 bool settings_save(void);
 bool settings_load(void);
 
+// Settings backup/restore via SD card — a single snapshot file at the SD
+// card root (overwritten each time you back up; there's only ever one).
+// Manual only, driven from the Backup & Restore screen. Restoring an
+// older/incomplete backup is safe: missing fields simply keep their current
+// values (same tolerant per-field parsing as the normal SPIFFS load path).
+// All three return false if no SD card is present or the operation
+// otherwise fails — never blocks or disrupts the rest of the app.
+bool settings_backup_to_sd(void);
+bool settings_restore_from_sd(void);
+bool settings_sd_backup_exists(void);
+
 // NTP server hostname
 void        settings_set_ntp_server(const char *server);
 const char *settings_get_ntp_server(void);
@@ -44,6 +55,11 @@ bool settings_get_time_24h(void);
 // WiFi permission: true = user has allowed WiFi (NTP syncs daily, releases after)
 void settings_set_wifi_enabled(bool enabled);
 bool settings_get_wifi_enabled(void);
+
+// SD-card logging: true = mirror ESP_LOG output to /sdcard/logs/ (takes
+// effect on next boot — see sd_logger_init()).
+void settings_set_sd_logging_enabled(bool enabled);
+bool settings_get_sd_logging_enabled(void);
 
 // SignalK server address (IPv4 string like "10.10.10.1" or a hostname) and
 // TCP port. Empty host means "not configured" — consumers must check before

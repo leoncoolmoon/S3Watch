@@ -2,7 +2,7 @@
 
 Custom smartwatch firmware built on ESP-IDF 5.x and LVGL 9, targeting the [Waveshare ESP32-S3-Touch-AMOLED-2.06](https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-2.06) development board.
 
-Originally a general-purpose smartwatch; now also a passive viewer for boat data via [SignalK](https://signalk.org/) — swipe up for an app picker (SignalK dashboard, World Clock, Stopwatch, Alarm), swipe down for the boat's currently-active alarms/notifications.
+Originally a general-purpose smartwatch; now also a passive viewer for boat data via [SignalK](https://signalk.org/) — swipe up for an app picker (SignalK dashboard, World Clock, Stopwatch, Alarm, Calendar), swipe down for the boat's currently-active alarms/notifications.
 
 <img src="ui_assets/s3watch_0.jpg" width="300"/> <img src="ui_assets/s3watch_1.jpg" width="300"/>
 
@@ -21,11 +21,12 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
 - **Wi-Fi settings** — scan, connect via on-screen keyboard, NTP server entry
 
 ### App picker
-- **App launcher tile** — swipe up from the watchface opens a 2×2 icon grid (background follows the active watchface background). Tapping an icon slides a dynamic full-screen app in from the right; swipe left or use Back to return to the picker. Currently four apps:
+- **App launcher tile** — swipe up from the watchface opens a scrollable 2-column icon grid (background follows the active watchface background). Tapping an icon slides a dynamic full-screen app in from the right; swipe left or use Back to return to the picker. Currently five apps:
   - **SignalK** — the marine dashboard (below)
   - **World Clock** — scrollable list of cities with live local times and day-offset badges (handles DST correctly via POSIX TZ strings)
   - **Stopwatch** — start/stop/lap/reset with centisecond precision (`esp_timer_get_time()`), persists state across app open/close, up to 50 laps
   - **Alarm Clock** — single daily alarm with hour/minute rollers, on/off toggle, dismiss button; fires even while the display is asleep (wakes the display, plays the alert sound, repeats every 30 s until dismissed)
+  - **Calendar** — read-only monthly reference view (LVGL `lv_calendar`) with today highlighted and built-in header arrows to page to the previous/next month; no events or notifications
 
 ### SignalK marine extension
 - **SignalK dashboard app** — launched from the app picker. 2×2 grid of live values in **American nautical units**:
@@ -34,7 +35,7 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
   - SOG (kt) — `navigation.speedOverGround`
   - Wind (`45° P / 12 kt`) — `environment.wind.angle/speedApparent`
 - **SignalK alerts tile** — swipe down from the watchface. Live list of currently-active `notifications.*` deltas, colour-coded by severity (`emergency`/`alarm`/`warn`/`alert`), sorted highest-first. Passive viewer only — the watch never originates alerts; the boat's alarm system is the source of truth.
-- **Demand-only WiFi** — the radio is **off** in steady state. Entering the SignalK dashboard or the alerts tile brings WiFi up, sets `WIFI_PS_MIN_MODEM` (radio sleeps between beacons to extend battery), opens a WebSocket to the configured SignalK server, and subscribes. Leaving the tile **or** the display going to sleep tears everything down (`esp_wifi_stop`).
+- **Demand-only WiFi** — the radio is **off** in steady state. Entering the SignalK dashboard or the alerts tile brings WiFi up, sets `WIFI_PS_MIN_MODEM` (radio sleeps between beacons to extend battery), opens a WebSocket to the configured SignalK server, and subscribes. Leaving the tile **or** the display going to sleep tears everything down (`esp_wifi_stop`). Respects the Wi-Fi permission toggle — if Wi-Fi is off, SignalK refuses to wake the radio and shows a "Wi-Fi disabled" status instead.
 - **SignalK settings** — server address via four-roller IP picker (or hostname fallback via QWERTY keyboard), port via numeric keypad.
 
 ### Other UI
@@ -43,6 +44,8 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
 - **Flashlight** — full-screen white at 100% brightness; swipe right to exit
 - **Audio alerts** — WAV/MP3 via ES8311 codec; synthesized fallback. Codec is closed between plays so it doesn't pin APB at 80 MHz.
 - **Persistent settings** — JSON on a dedicated SPIFFS partition
+- **SD-card diagnostic logging** — optional toggle (Settings → Storage → "Log to SD Card", takes effect on next boot). Mirrors all `ESP_LOG` output to numbered files under `/sdcard/logs/` (`logNNNNN.log`, never overwritten) for the lifetime of each boot session, so crashes that only happen away from a serial monitor can still be diagnosed afterwards. Fully inert — no SD access, no hook installed — when off.
+- **Settings backup & restore** — manual snapshot to/from the SD card (Settings → Storage → Backup & Restore): a single `settings.bak` file at the card root, overwritten each time you back up. Includes saved Wi-Fi networks (SSID/password) alongside display, sound, NTP, timezone, and SignalK settings — restoring after a reflash means not having to retype any of it. Restore tolerates incomplete or version-mismatched backups — fields the backup doesn't have simply keep their current in-memory values rather than being zeroed.
 
 ---
 
@@ -67,7 +70,8 @@ The UI is a 2D tileview anchored on the watchface. All transitions are gesture-d
                        ┌────────────────────────────┐         tap icon         ┌────────────────────────────┐
                        │     App Picker (0,2)       │ ───────────────────────▶ │   Dynamic App Tile (1,2)   │
                        │ SignalK · World Clock ·    │ ◀─────────────────────── │ SignalK / World Clock /    │
-                       │ Stopwatch · Alarm          │   swipe left / Back      │ Stopwatch / Alarm Clock    │
+                       │ Stopwatch · Alarm ·        │   swipe left / Back      │ Stopwatch / Alarm Clock /  │
+                       │ Calendar                   │                          │ Calendar                   │
                        └────────────────────────────┘                          └────────────────────────────┘
 ```
 
@@ -182,6 +186,7 @@ S3Watch/
 │   │   │   ├── world_clock.c                   # World Clock app
 │   │   │   ├── stopwatch.c                     # Stopwatch app
 │   │   │   ├── alarm_clock.c                   # Alarm Clock app
+│   │   │   ├── calendar_app.c                  # Calendar app (lv_calendar wrapper)
 │   │   │   ├── signalk_dashboard.c             # SignalK app (launched from app picker)
 │   │   │   ├── signalk_dashboard_fmt.c         # Pure formatters (testable)
 │   │   │   ├── signalk_alerts.c                # SignalK alarms tile (swipe down)
@@ -209,6 +214,7 @@ S3Watch/
 │   ├── wifi_manager/                           # Wi-Fi scan/connect/auto/release; event bus
 │   ├── ntp_sync/                               # SNTP; fires on connect, releases on success
 │   ├── audio_alert/                            # ES8311 init, WAV/MP3 decode, synth fallback
+│   ├── sd_logger/                              # Mirrors ESP_LOG to /sdcard/logs/ when enabled
 │   ├── sensors/                                # QMI8658 power-down + test-hook accel read
 │   ├── signalk_client/                         # WebSocket client; value + alert caches
 │   │   ├── src/signalk_client.c                #   parse_delta, WS event handler, lifecycle
@@ -325,7 +331,7 @@ Managed via the ESP-IDF Component Manager:
 
 - **No on-device push for SignalK** — the SignalK alerts tile is a passive viewer; the watch does not vibrate, badge the watchface, or originate alerts of its own for boat data. The boat's alarm system is the source of truth. (The Alarm Clock app is unrelated — it's a standalone daily alarm, see App picker above.)
 - **No SignalK authentication** — v1 assumes the server allows anonymous read of `vessels.self`. Token auth is a future setting.
-- **Wi-Fi radio released after NTP sync** — re-opening Wi-Fi settings, or entering a SignalK tile, wakes the radio on demand.
+- **Wi-Fi radio released after NTP sync** — re-opening Wi-Fi settings, or entering a SignalK tile, wakes the radio on demand (unless the Wi-Fi permission toggle is off, in which case both refuse to activate it and show a "disabled" status instead).
 - **No VBAT backup for RTC** — the PCF85063A loses power when the main battery is fully drained; time is recovered from NVS on next boot but may be slightly stale.
 - **PMU GPIO wakeup not used** — the AXP2101 INT pin (GPIO 35) is held LOW when USB power is connected, making level-triggered wakeup unsafe (causes WDT reset). The display manager polls instead.
 - **Watchface width variability** — `font_numbers_120` has non-monospaced digits ('4' is 85 px wide vs '1' at 63 px). For digit combinations heavy in '4's, the time row may slightly overflow the 410 px screen width.

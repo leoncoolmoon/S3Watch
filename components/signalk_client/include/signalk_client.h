@@ -16,12 +16,13 @@ typedef enum {
 } signalk_path_t;
 
 typedef enum {
-    SIGNALK_STATE_IDLE,        // not started — radio off, no client
-    SIGNALK_STATE_NO_CONFIG,   // host empty
-    SIGNALK_STATE_WIFI_UP,     // waiting for WiFi association
-    SIGNALK_STATE_CONNECTING,  // WS handshake in progress
-    SIGNALK_STATE_CONNECTED,   // subscribed, receiving deltas
-    SIGNALK_STATE_ERROR,       // last attempt failed; will retry on next start
+    SIGNALK_STATE_IDLE,           // not started — radio off, no client
+    SIGNALK_STATE_NO_CONFIG,      // host empty
+    SIGNALK_STATE_WIFI_DISABLED,  // user has WiFi permission turned off
+    SIGNALK_STATE_WIFI_UP,        // waiting for WiFi association
+    SIGNALK_STATE_CONNECTING,     // WS handshake in progress
+    SIGNALK_STATE_CONNECTED,      // subscribed, receiving deltas
+    SIGNALK_STATE_ERROR,          // last attempt failed; will retry on next start
 } signalk_state_t;
 
 typedef struct {
