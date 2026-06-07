@@ -9,7 +9,8 @@
 //   2. Implement the three callbacks and define `const watchface_iface_t
 //      watchface_faceN = { ... };`.
 //   3. Add `&watchface_faceN` to s_faces[] below.
-//   4. Bump the option count / label in setting_watchface_screen.c.
+//   The setting_watchface_screen picker is driven by watchface_get_count() /
+//   watchface_get_name() and updates automatically — no change needed there.
 
 #include "watchface.h"
 #include "watchface_iface.h"

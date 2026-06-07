@@ -3,6 +3,7 @@
 #include "ui_fonts.h"
 #include "settings.h"
 #include "watchface.h"
+#include "app_picker.h"
 #include "esp_log.h"
 
 static lv_obj_t* s_screen;
@@ -47,6 +48,7 @@ static void on_bg_change(lv_event_t* e)
     ESP_LOGI(TAG, "Background selected: %d", sel);
     settings_set_watchface_bg(sel);
     watchface_rebuild();
+    app_picker_refresh_bg();
 }
 
 void setting_watchface_screen_create(lv_obj_t* parent)

@@ -27,6 +27,7 @@ typedef struct {
 } dash_t;
 
 static dash_t s_d;
+static bool   s_subscribed = false;
 
 static bool value_fresh(const signalk_value_t *v) {
     if (!v->valid) return false;
@@ -44,6 +45,15 @@ static const char *state_text(signalk_state_t st) {
     case SIGNALK_STATE_ERROR:      return "Error";
     }
     return "?";
+}
+
+// Fired by LVGL (inside the LVGL lock) when the tile that owns the dashboard
+// is being deleted. Zeroing s_d here is race-free: tick_cb also holds the
+// LVGL lock before touching s_d, so the two operations are serialised.
+static void dash_on_delete(lv_event_t *e)
+{
+    (void)e;
+    s_d.hdg = s_d.depth = s_d.sog = s_d.wind = s_d.status = NULL;
 }
 
 // 1 Hz refresh, only fires while display is on (task_coord off-period = 0).
@@ -66,6 +76,9 @@ static void tick_cb(void *user) {
     const char *status = state_text(signalk_client_state());
 
     if (!bsp_display_lock(50)) return;  // skip this tick on contention
+    // s_d is zeroed by dash_on_delete (under the same lock) when the tile is
+    // destroyed — check here to avoid touching freed widget memory.
+    if (!s_d.hdg) { bsp_display_unlock(); return; }
     lv_label_set_text(s_d.hdg,    hdg);
     lv_label_set_text(s_d.depth,  depth);
     lv_label_set_text(s_d.sog,    sog);
@@ -121,7 +134,15 @@ void signalk_dashboard_create(lv_obj_t *parent) {
     lv_obj_align(s_d.status, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_label_set_text(s_d.status, "—");
 
-    task_coord_subscribe("signalk_dash", tick_cb, NULL,
-                         /*on*/  1000,   // 1 Hz while display on
-                         /*off*/    0);  // skipped while off
+    // Register delete handler so we can null s_d before the widgets are freed.
+    lv_obj_add_event_cb(parent, dash_on_delete, LV_EVENT_DELETE, NULL);
+
+    // Subscribe only once — task_coord has no unsubscribe, so calling this on
+    // every re-open would stack up duplicate callbacks.
+    if (!s_subscribed) {
+        task_coord_subscribe("signalk_dash", tick_cb, NULL,
+                             /*on*/  1000,   // 1 Hz while display on
+                             /*off*/    0);  // skipped while off
+        s_subscribed = true;
+    }
 }

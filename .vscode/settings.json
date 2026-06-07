@@ -43,5 +43,5 @@
   ],
   "idf.currentSetup": "/Users/rich/.espressif/v5.5.4/esp-idf",
   "idf.port": "/dev/tty.usbmodem14201",
-  "idf.monitorPort": "/dev/tty.usbmodem14201"
+  "idf.monitorPort": "/dev/tty.usbmodem14101"
 }

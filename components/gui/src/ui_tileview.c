@@ -1,17 +1,18 @@
 // Main tileview construction + dynamic-tile lifecycle.
 //
-// Layout: watchface at (0,1) (home), controls at (1,1). SignalK dashboard
-// at (0,2) (swipe up from the watchface), SignalK alerts at (0,0) (swipe
-// down from the watchface). Dynamic settings tiles open to the right at
-// (2,1) and (3,1). Closing/navigating-away triggers async deletion via the
-// tileview's VALUE_CHANGED auto-clean handler.
+// Layout: watchface at (0,1) (home), controls at (1,1), SignalK alerts at
+// (0,0) (swipe down), app picker at (0,2) (swipe up). Dynamic settings tiles
+// open to the right of controls at (2,1) and (3,1). The app tile (1,2) opens
+// to the right of the app picker when an app icon is tapped, and is deleted
+// on navigate-away. All dynamic tiles use async deletion via the tileview's
+// VALUE_CHANGED auto-clean handler to avoid freeing tiles mid-animation.
 
 #include "ui.h"
 #include "ui_tileview.h"
 #include "ui_screens.h"
 #include "watchface.h"
 #include "settings_screen.h"
-#include "signalk_dashboard.h"
+#include "app_picker.h"
 #include "signalk_alerts.h"
 #include "signalk_client.h"
 #include "esp_log.h"
@@ -24,21 +25,26 @@ static lv_obj_t* main_screen     = NULL;
 static lv_obj_t* tile_alerts     = NULL;  // SignalK alerts     (0,0)
 static lv_obj_t* tile2           = NULL;  // watchface          (0,1)
 static lv_obj_t* tile4           = NULL;  // controls           (1,1)
-static lv_obj_t* tile_signalk    = NULL;  // SignalK dashboard  (0,2)
+static lv_obj_t* tile_picker     = NULL;  // app picker         (0,2)
 static lv_obj_t* dynamic_tile    = NULL;  // settings menu / etc. (2,1)
 static lv_obj_t* dynamic_subtile = NULL;  // settings sub-screens (3,1)
+static lv_obj_t* s_app_tile      = NULL;  // dynamic app screen (1,2)
 
 void ui_tileview_back(void) {
   if (active_screen_get() != get_main_screen()) {
     load_screen(NULL, get_main_screen(), LV_SCR_LOAD_ANIM_OVER_TOP);
   }
-  // Prefer closing level-2 first, then level-1.
+  // Prefer closing level-2 first, then level-1, then app tile, then home.
   if (dynamic_subtile) {
     ui_dynamic_subtile_close();
     return;
   }
   if (dynamic_tile) {
     ui_dynamic_tile_close();
+    return;
+  }
+  if (s_app_tile) {
+    ui_app_tile_close();
     return;
   }
   // Already at watchface/controls level — make sure we're showing watchface.
@@ -52,13 +58,13 @@ static void tileview_change_cb(lv_event_t* e) {
 
   lv_obj_t* act = lv_tileview_get_tile_active(main_screen);
 
-  // Any SignalK tile (dashboard OR alerts) brings WiFi + WS up on enter,
-  // tears them down on leave to a non-signalk tile.
+  // Any SignalK tile (app tile hosting the dashboard, OR alerts) brings WiFi +
+  // WS up on enter, tears them down on leave to a non-signalk tile.
   // signalk_client_{start,stop} are idempotent and no-op when host is empty.
   {
     static lv_obj_t* prev_sk = NULL;
-    bool act_is_sk  = (act      == tile_signalk || act      == tile_alerts);
-    bool prev_is_sk = (prev_sk  == tile_signalk || prev_sk  == tile_alerts);
+    bool act_is_sk  = (act     == s_app_tile || act     == tile_alerts);
+    bool prev_is_sk = (prev_sk == s_app_tile || prev_sk == tile_alerts);
     if (act_is_sk && !prev_is_sk) {
       ESP_LOGI(TAG, "Entering SignalK tile — starting client");
       signalk_client_start();
@@ -67,6 +73,13 @@ static void tileview_change_cb(lv_event_t* e) {
       signalk_client_stop();
     }
     prev_sk = act;
+  }
+
+  // Delete the app tile if navigated away from it.
+  if (s_app_tile && act != s_app_tile) {
+    ESP_LOGI(TAG, "Auto-clean: deleting app tile (1,2)");
+    lv_obj_del_async(s_app_tile);
+    s_app_tile = NULL;
   }
 
   // Delete level-2 if not active. Use async deletion: we're inside the
@@ -111,10 +124,10 @@ void swatch_tileview(void) {
   tile4 = lv_tileview_add_tile(main_screen, 1, 1, (lv_dir_t)(LV_DIR_LEFT | LV_DIR_RIGHT));
   control_screen_create(tile4);
 
-  // SignalK dashboard below the watchface at (0,2). LV_DIR_TOP enables
-  // swipe-down to scroll back up to the watchface.
-  tile_signalk = lv_tileview_add_tile(main_screen, 0, 2, (lv_dir_t)LV_DIR_TOP);
-  signalk_dashboard_create(tile_signalk);
+  // App picker below the watchface at (0,2). LV_DIR_TOP enables swipe-down
+  // back to the watchface; LV_DIR_RIGHT allows sliding to the app tile (1,2).
+  tile_picker = lv_tileview_add_tile(main_screen, 0, 2, (lv_dir_t)(LV_DIR_TOP | LV_DIR_RIGHT));
+  app_picker_create(tile_picker);
 
   // Initial active tile: the watchface.
   lv_tileview_set_tile(main_screen, tile2, LV_ANIM_OFF);
@@ -207,8 +220,54 @@ void ui_tileview_reset_to_watchface(void) {
     lv_obj_del_async(dynamic_tile);
     dynamic_tile = NULL;
   }
+  if (s_app_tile) {
+    lv_obj_del_async(s_app_tile);
+    s_app_tile = NULL;
+  }
   if (lv_tileview_get_tile_active(main_screen) != tile2) {
     lv_tileview_set_tile(main_screen, tile2, LV_ANIM_OFF);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Row-2 app tile — opened by the app picker at (0,2), lives at (1,2).
+// Mirrors the row-1 dynamic tile pattern exactly.
+// ---------------------------------------------------------------------------
+
+lv_obj_t* ui_app_tile_acquire(void) {
+  if (!main_screen) return NULL;
+  if (s_app_tile) {
+    lv_obj_clean(s_app_tile);
+    ESP_LOGI(TAG, "Reusing app tile (1,2)");
+    return s_app_tile;
+  }
+  s_app_tile = lv_tileview_add_tile(main_screen, 1, 2, (lv_dir_t)LV_DIR_LEFT);
+  if (s_app_tile) {
+    lv_obj_update_layout(main_screen);
+    ESP_LOGI(TAG, "Created app tile (1,2)");
+  }
+  return s_app_tile;
+}
+
+void ui_app_tile_show(void) {
+  if (!s_app_tile || !main_screen) return;
+  ESP_LOGI(TAG, "Showing app tile (1,2)");
+  if (active_screen_get() != get_main_screen()) {
+    load_screen(NULL, get_main_screen(), LV_SCR_LOAD_ANIM_NONE);
+  }
+  lv_tileview_set_tile(main_screen, s_app_tile, LV_ANIM_ON);
+  lv_tileview_set_tile(main_screen, s_app_tile, LV_ANIM_ON);
+}
+
+void ui_app_tile_close(void) {
+  if (!main_screen) return;
+  if (tile_picker) {
+    lv_tileview_set_tile(main_screen, tile_picker, LV_ANIM_ON);
+  }
+  if (s_app_tile) {
+    ESP_LOGI(TAG, "Deleting app tile (1,2)");
+    lv_obj_del_async(s_app_tile);
+    s_app_tile = NULL;
   }
 }
 
