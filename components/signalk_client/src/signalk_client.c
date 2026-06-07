@@ -1,10 +1,14 @@
 // SignalK WebSocket client.
 //
 // Lifecycle:
-//   start()  : wifi_manager_wake() -> WIFI_MGR_EVT_CONNECTED ->
-//              esp_wifi_set_ps(WIFI_PS_MAX_MODEM) -> ws_start ->
-//              CONNECTED -> send subscribe -> populate value cache.
-//   stop()   : ws_close + destroy -> wifi_manager_release() (esp_wifi_stop).
+//   start()  : wifi_manager_hold() (claim the radio for the session — see
+//              wifi_manager.h; stops ntp_sync's post-sync release() or the
+//              WiFi scan screen's on-close release() from yanking the radio
+//              out from under us) -> wifi_manager_wake() ->
+//              WIFI_MGR_EVT_CONNECTED -> esp_wifi_set_ps(WIFI_PS_MAX_MODEM)
+//              -> ws_start -> CONNECTED -> send subscribe -> populate cache.
+//   stop()   : ws_close + destroy -> wifi_manager_unhold() ->
+//              wifi_manager_release() (esp_wifi_stop, now unblocked).
 //
 // The cache is read by the dashboard's 1 Hz task_coord subscriber via
 // signalk_client_get(). Updates happen on the websocket task; coarse
@@ -409,11 +413,20 @@ void signalk_client_start(void) {
     ESP_LOGI(TAG, "start: waking WiFi for SignalK");
     s_want_wifi = true;
     set_state(SIGNALK_STATE_WIFI_UP);
+    // Claim the radio for the whole session — without this, ntp_sync's
+    // "sync clock then release()" cycle (or the WiFi scan screen releasing
+    // on close) can stop the radio out from under our WebSocket the moment
+    // it fires, and we'd sit forever retrying against a dead radio (the
+    // "SignalK never gets data" failure). Matched by wifi_manager_unhold()
+    // in stop(), guarded below and by the s_want_wifi check there.
+    wifi_manager_hold();
     // Bring the radio up (no-op if already up). The actual connect happens
     // via wifi_manager_auto_connect which is driven from the boot path; we
     // call it again here to ensure the saved-network attempt fires after
     // a release.
     if (wifi_manager_wake() != ESP_OK) {
+        wifi_manager_unhold();
+        s_want_wifi = false;
         set_state(SIGNALK_STATE_ERROR);
         return;
     }
@@ -430,6 +443,12 @@ void signalk_client_start(void) {
 }
 
 void signalk_client_stop(void) {
+    // s_want_wifi doubles as "we currently hold the radio" — it's set true
+    // only alongside wifi_manager_hold() in start(), and this is the only
+    // place either gets cleared. Capture it before clearing so we unhold
+    // exactly once per matching hold (e.g. not when stop() is reached via
+    // the NO_CONFIG/WIFI_DISABLED early-returns in start(), which never hold).
+    bool was_holding = s_want_wifi;
     // Disarm the wifi-event path before grabbing the lock so a concurrent
     // wifi_evt → open_ws sees s_want_wifi == false and bails before
     // contending here.
@@ -448,9 +467,12 @@ void signalk_client_stop(void) {
             esp_websocket_client_destroy(s_ws);
             s_ws = NULL;
         }
-        wifi_manager_release();   // esp_wifi_stop — radio fully off
+        if (was_holding) wifi_manager_unhold();
+        wifi_manager_release();   // esp_wifi_stop — radio fully off (once unheld)
         signalk_alerts_clear();   // session-local cache; next start re-populates
         set_state(SIGNALK_STATE_IDLE);
+    } else if (was_holding) {
+        wifi_manager_unhold();
     }
     if (locked) xSemaphoreGive(s_lifecycle_mux);
 }

@@ -30,6 +30,9 @@ static SemaphoreHandle_t  s_lock         = NULL;
 static esp_netif_t       *s_netif        = NULL;
 static bool               s_initialized  = false;
 static bool               s_radio_running = false;
+// Number of outstanding wifi_manager_hold() calls — see wifi_manager_hold()
+// for why release() must defer while this is nonzero.
+static int                s_hold_count   = 0;
 static bool               s_connected    = false;
 static char               s_ssid[WIFI_MANAGER_MAX_SSID_LEN];
 static int8_t             s_rssi         = 0;
@@ -315,6 +318,16 @@ esp_err_t wifi_manager_release(void)
     if (!s_initialized) return ESP_OK;
 
     xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
+    if (s_hold_count > 0) {
+        // A long-lived consumer (e.g. SignalK's WebSocket) is mid-session —
+        // don't yank the radio out from under it just because some unrelated
+        // subsystem (e.g. NTP sync, finishing its own quick wake-sync cycle)
+        // thinks it's done with WiFi. The holder will release() when its own
+        // session ends.
+        ESP_LOGI(TAG, "Release deferred — %d active hold(s) on the radio", s_hold_count);
+        xSemaphoreGiveRecursive(s_lock);
+        return ESP_OK;
+    }
     if (!s_radio_running) {
         xSemaphoreGiveRecursive(s_lock);
         return ESP_OK;
@@ -348,4 +361,18 @@ esp_err_t wifi_manager_wake(void)
     }
     xSemaphoreGiveRecursive(s_lock);
     return err;
+}
+
+void wifi_manager_hold(void)
+{
+    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
+    s_hold_count++;
+    xSemaphoreGiveRecursive(s_lock);
+}
+
+void wifi_manager_unhold(void)
+{
+    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
+    if (s_hold_count > 0) s_hold_count--;
+    xSemaphoreGiveRecursive(s_lock);
 }

@@ -68,6 +68,20 @@ int8_t      wifi_manager_connected_rssi(void);
 esp_err_t wifi_manager_release(void);
 esp_err_t wifi_manager_wake(void);
 
+// Holds — for consumers with a long-lived need for the radio (e.g. the
+// SignalK WebSocket). Several independent subsystems treat "WiFi just came
+// up" as their cue to do a quick task and call release() when done (NTP sync
+// syncs the clock then releases; the WiFi scan screen wakes to scan then
+// releases on close) — that's fine when nothing else needs the radio, but it
+// would otherwise yank the radio out from under a long session that merely
+// happened to start around the same time. Bracket such a session with
+// hold()/unhold(): while any holds are outstanding, release() defers (logs
+// and returns ESP_OK without stopping the radio) instead of stopping it out
+// from under the holder. unhold() does not itself stop the radio — the
+// holder should still call release() when its own session ends.
+void wifi_manager_hold(void);
+void wifi_manager_unhold(void);
+
 #ifdef __cplusplus
 }
 #endif

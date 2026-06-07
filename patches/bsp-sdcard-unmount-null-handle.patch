@@ -1,0 +1,40 @@
+From: S3Watch
+Subject: bsp_sdcard_unmount: reset bsp_sdcard to NULL after a successful unmount
+
+esp_vfs_fat_sdcard_unmount() frees the sdmmc_card_t that bsp_sdcard points
+to, but never nulls the caller's handle. Any code that uses
+"bsp_sdcard == NULL" as its "is the card currently mounted?" check (e.g.
+S3Watch's settings.c sd_acquire()/sd_release(), which use it to detect
+"already mounted by sd_logger" and decide whether to mount/unmount
+themselves) is permanently fooled after the FIRST mount/unmount cycle of a
+session: it sees a dangling non-NULL pointer, concludes the card is still
+mounted, skips remounting it, and silently operates on an unmounted
+filesystem from then on (manifests as e.g. "Restore failed — no usable
+backup" despite the backup file existing).
+
+Apply from the root of this BSP repo with:
+  git apply path/to/bsp-sdcard-unmount-null-handle.patch
+or:
+  patch -p1 < path/to/bsp-sdcard-unmount-null-handle.patch
+
+--- a/esp32_s3_touch_amoled_2_06.c
++++ b/esp32_s3_touch_amoled_2_06.c
+@@ -239,6 +239,17 @@
+ 
+ esp_err_t bsp_sdcard_unmount(void)
+ {
+-    return esp_vfs_fat_sdcard_unmount(BSP_SD_MOUNT_POINT, bsp_sdcard);
++    // esp_vfs_fat_sdcard_unmount() frees the sdmmc_card_t this points to —
++    // reset to NULL on success so bsp_sdcard accurately reflects "not
++    // mounted" afterward. Callers (e.g. settings.c's sd_acquire/sd_release,
++    // which detect "already mounted by sd_logger" via bsp_sdcard == NULL)
++    // would otherwise see a dangling non-NULL pointer, wrongly conclude the
++    // card is still mounted, skip remounting it, and silently operate on an
++    // unmounted filesystem.
++    esp_err_t err = esp_vfs_fat_sdcard_unmount(BSP_SD_MOUNT_POINT, bsp_sdcard);
++    if (err == ESP_OK) {
++        bsp_sdcard = NULL;
++    }
++    return err;
+ }
+ 
