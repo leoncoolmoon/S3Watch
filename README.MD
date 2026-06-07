@@ -2,7 +2,7 @@
 
 Custom smartwatch firmware built on ESP-IDF 5.x and LVGL 9, targeting the [Waveshare ESP32-S3-Touch-AMOLED-2.06](https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-2.06) development board.
 
-Originally a general-purpose smartwatch; now also a passive viewer for boat data via [SignalK](https://signalk.org/) — swipe up for live HDG / Depth / SOG / Wind, swipe down for the boat's currently-active alarms/notifications.
+Originally a general-purpose smartwatch; now also a passive viewer for boat data via [SignalK](https://signalk.org/) — swipe up for an app picker (SignalK dashboard, World Clock, Stopwatch, Alarm), swipe down for the boat's currently-active alarms/notifications.
 
 <img src="ui_assets/s3watch_0.jpg" width="300"/> <img src="ui_assets/s3watch_1.jpg" width="300"/>
 
@@ -20,14 +20,21 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
 - **Wi-Fi permission toggle** — master switch in Controls; when off, the radio never activates
 - **Wi-Fi settings** — scan, connect via on-screen keyboard, NTP server entry
 
+### App picker
+- **App launcher tile** — swipe up from the watchface opens a 2×2 icon grid (background follows the active watchface background). Tapping an icon slides a dynamic full-screen app in from the right; swipe left or use Back to return to the picker. Currently four apps:
+  - **SignalK** — the marine dashboard (below)
+  - **World Clock** — scrollable list of cities with live local times and day-offset badges (handles DST correctly via POSIX TZ strings)
+  - **Stopwatch** — start/stop/lap/reset with centisecond precision (`esp_timer_get_time()`), persists state across app open/close, up to 50 laps
+  - **Alarm Clock** — single daily alarm with hour/minute rollers, on/off toggle, dismiss button; fires even while the display is asleep (wakes the display, plays the alert sound, repeats every 30 s until dismissed)
+
 ### SignalK marine extension
-- **SignalK dashboard tile** — swipe up from the watchface. 2×2 grid of live values in **American nautical units**:
+- **SignalK dashboard app** — launched from the app picker. 2×2 grid of live values in **American nautical units**:
   - HDG (°) — `navigation.headingMagnetic`
   - Depth (ft) — `environment.depth.belowTransducer`
   - SOG (kt) — `navigation.speedOverGround`
   - Wind (`45° P / 12 kt`) — `environment.wind.angle/speedApparent`
 - **SignalK alerts tile** — swipe down from the watchface. Live list of currently-active `notifications.*` deltas, colour-coded by severity (`emergency`/`alarm`/`warn`/`alert`), sorted highest-first. Passive viewer only — the watch never originates alerts; the boat's alarm system is the source of truth.
-- **Demand-only WiFi** — the radio is **off** in steady state. Entering either SignalK tile brings WiFi up, sets `WIFI_PS_MIN_MODEM` (radio sleeps between beacons to extend battery), opens a WebSocket to the configured SignalK server, and subscribes. Leaving the tile **or** the display going to sleep tears everything down (`esp_wifi_stop`).
+- **Demand-only WiFi** — the radio is **off** in steady state. Entering the SignalK dashboard or the alerts tile brings WiFi up, sets `WIFI_PS_MIN_MODEM` (radio sleeps between beacons to extend battery), opens a WebSocket to the configured SignalK server, and subscribes. Leaving the tile **or** the display going to sleep tears everything down (`esp_wifi_stop`).
 - **SignalK settings** — server address via four-roller IP picker (or hostname fallback via QWERTY keyboard), port via numeric keypad.
 
 ### Other UI
@@ -56,11 +63,15 @@ The UI is a 2D tileview anchored on the watchface. All transitions are gesture-d
    └──────────────────────────────┘  left   └────────────────────────────┘      tiles
                                        │
                                   swipe up
-                                       ↓
-                       ┌────────────────────────────┐
-                       │  SignalK Dashboard (0,2)   │   swipe ↑ from watchface
-                       └────────────────────────────┘
+                                       ▼
+                       ┌────────────────────────────┐         tap icon         ┌────────────────────────────┐
+                       │     App Picker (0,2)       │ ───────────────────────▶ │   Dynamic App Tile (1,2)   │
+                       │ SignalK · World Clock ·    │ ◀─────────────────────── │ SignalK / World Clock /    │
+                       │ Stopwatch · Alarm          │   swipe left / Back      │ Stopwatch / Alarm Clock    │
+                       └────────────────────────────┘                          └────────────────────────────┘
 ```
+
+The app tile at (1,2) is created on demand (`ui_app_tile_acquire/show/close` in `ui_tileview.c`) and torn down via `lv_obj_del_async` whenever the tileview navigates away from it — mirroring the existing dynamic Settings sub-tile pattern at (2,1)/(3,1).
 
 **Always return to the watchface on wake** — `display_manager`'s pre-show hook snaps the tileview back to (0,1) before the backlight comes on, so every wake starts at home.
 
@@ -87,6 +98,7 @@ Base cadence: **100 ms when the display is on, 1 s when off**. Current subscribe
 | `ui_battery_refresh` (gui) | 30 s | — | refresh watchface battery indicator |
 | `signalk_dash` (gui) | 1 s | — | pull cached SignalK values into the dashboard labels |
 | `signalk_alerts` (gui) | 1 s | — | repaint the alerts list from the active-alert cache |
+| `alarm_check` (gui) | 1 s | 1 s | alarm time-match check; wakes the display + plays the alert sound when due |
 
 The task_coordinator stack is sized for LVGL render under the wake hook (8 KB) so subscribers that mutate widgets can do so directly (under the LVGL lock).
 
@@ -166,7 +178,11 @@ S3Watch/
 │   │   │   ├── watchface.c                     # Registry + dispatcher
 │   │   │   ├── faces/face_1.c                  # Stacked HH/MM + centered SS
 │   │   │   ├── faces/face_2.c                  # Horizontal HH:MM + AM/PM + date
-│   │   │   ├── signalk_dashboard.c             # SignalK tile (swipe up)
+│   │   │   ├── app_picker.c                    # App launcher grid (swipe up, tile 0,2)
+│   │   │   ├── world_clock.c                   # World Clock app
+│   │   │   ├── stopwatch.c                     # Stopwatch app
+│   │   │   ├── alarm_clock.c                   # Alarm Clock app
+│   │   │   ├── signalk_dashboard.c             # SignalK app (launched from app picker)
 │   │   │   ├── signalk_dashboard_fmt.c         # Pure formatters (testable)
 │   │   │   ├── signalk_alerts.c                # SignalK alarms tile (swipe down)
 │   │   │   ├── batt_screen.c, brightness_screen.c, ...
@@ -307,7 +323,7 @@ Managed via the ESP-IDF Component Manager:
 
 ## Known Limitations
 
-- **No on-device push** — the SignalK alerts tile is a passive viewer. The watch does not vibrate, badge the watchface, or sound an alarm of its own. The boat's alarm system is the source of truth.
+- **No on-device push for SignalK** — the SignalK alerts tile is a passive viewer; the watch does not vibrate, badge the watchface, or originate alerts of its own for boat data. The boat's alarm system is the source of truth. (The Alarm Clock app is unrelated — it's a standalone daily alarm, see App picker above.)
 - **No SignalK authentication** — v1 assumes the server allows anonymous read of `vessels.self`. Token auth is a future setting.
 - **Wi-Fi radio released after NTP sync** — re-opening Wi-Fi settings, or entering a SignalK tile, wakes the radio on demand.
 - **No VBAT backup for RTC** — the PCF85063A loses power when the main battery is fully drained; time is recovered from NVS on next boot but may be slightly stale.

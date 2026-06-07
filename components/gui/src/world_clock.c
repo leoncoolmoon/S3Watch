@@ -212,12 +212,15 @@ void world_clock_create(lv_obj_t *parent)
         lv_label_set_text(day_lbl, "");
         s_day_lbl[i] = day_lbl;
 
-        // Time
+        // Time — wide enough for the longest 12-hour string ("12:30 AM");
+        // clip rather than wrap so an overlong string can't spill into the
+        // row below instead of being cut off in place.
         lv_obj_t *time_lbl = lv_label_create(row);
         lv_obj_set_style_text_font(time_lbl, &font_normal_26, 0);
         lv_obj_set_style_text_color(time_lbl, lv_color_white(), 0);
         lv_obj_set_style_pad_right(time_lbl, 4, 0);
-        lv_obj_set_width(time_lbl, 80);
+        lv_obj_set_size(time_lbl, 120, LV_SIZE_CONTENT);
+        lv_label_set_long_mode(time_lbl, LV_LABEL_LONG_CLIP);
         lv_obj_set_style_text_align(time_lbl, LV_TEXT_ALIGN_RIGHT, 0);
         lv_label_set_text(time_lbl, "--:--");
         s_time_lbl[i] = time_lbl;
