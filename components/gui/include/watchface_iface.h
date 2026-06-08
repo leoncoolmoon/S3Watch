@@ -34,6 +34,37 @@ typedef struct {
     void (*update_power)(bool vbus_in, bool charging, int battery_percent);
 } watchface_iface_t;
 
+// ── Shared face helpers ──────────────────────────────────────────────────
+//
+// Generic building blocks every face needs (background image, battery
+// widget, 12h/24h hour formatting), implemented once in watchface.c so
+// individual face files stay focused on their own layout — see the "Adding
+// a new face" guidance in faces/README.md.
+
+// Create the user-selected background image as a child of `parent`,
+// centered. Faces call this first thing in build().
+void watchface_add_background(lv_obj_t *parent);
+
+// Create the standard battery indicator (icon + percent label + charge
+// glyph) as children of `parent`, in the standard top-mid position. Faces
+// stash the returned widget pointers and pass them straight through to
+// watchface_update_battery_widget() from their update_power callback.
+void watchface_build_battery_widget(lv_obj_t *parent, lv_obj_t **out_icon,
+                                    lv_obj_t **out_pct_label,
+                                    lv_obj_t **out_charge_label);
+
+// Apply vbus/charging/battery-percent state to a widget built by
+// watchface_build_battery_widget(). Each pointer is checked individually,
+// so it's safe to call even if build() bailed out early and left some NULL.
+void watchface_update_battery_widget(lv_obj_t *icon, lv_obj_t *pct_label,
+                                     lv_obj_t *charge_label, bool vbus_in,
+                                     bool charging, int battery_percent);
+
+// Format the current hour into `label_hour` per the user's 12h/24h
+// preference, showing/hiding `label_ampm` to match. Either pointer may be
+// NULL.
+void watchface_update_hour_label(lv_obj_t *label_hour, lv_obj_t *label_ampm);
+
 #ifdef __cplusplus
 }
 #endif

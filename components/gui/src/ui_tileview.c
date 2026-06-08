@@ -162,8 +162,6 @@ void ui_dynamic_tile_show(void) {
     load_screen(NULL, get_main_screen(), LV_SCR_LOAD_ANIM_NONE);
   }
   lv_tileview_set_tile(main_screen, dynamic_tile, LV_ANIM_ON);
-  // FIX bug for first action
-  lv_tileview_set_tile(main_screen, dynamic_tile, LV_ANIM_ON);
 }
 
 // Acquire or create a second-level tile at (3,1)
@@ -189,7 +187,6 @@ void ui_dynamic_subtile_show(void) {
     load_screen(NULL, get_main_screen(), LV_SCR_LOAD_ANIM_NONE);
   }
 
-  lv_tileview_set_tile(main_screen, dynamic_subtile, LV_ANIM_ON);
   lv_tileview_set_tile(main_screen, dynamic_subtile, LV_ANIM_ON);
 }
 

@@ -17,22 +17,6 @@ static lv_obj_t* img_battery;
 static lv_obj_t* lbl_batt_pct;
 static lv_obj_t* lbl_charge_icon;
 
-static void add_background(lv_obj_t* c) {
-    lv_obj_t* image = lv_image_create(c);
-    int bg = settings_get_watchface_bg();
-    if (bg == 1) {
-        LV_IMAGE_DECLARE(background_wf);
-        lv_image_set_src(image, &background_wf);
-    } else if (bg == 2) {
-        LV_IMAGE_DECLARE(background_wf_3);
-        lv_image_set_src(image, &background_wf_3);
-    } else {
-        LV_IMAGE_DECLARE(background_wf_2);
-        lv_image_set_src(image, &background_wf_2);
-    }
-    lv_obj_set_align(image, LV_ALIGN_CENTER);
-}
-
 static void face1_build(lv_obj_t* c) {
     // Reset all label pointers so the update callback can safely no-op on
     // any that might persist from a prior build.
@@ -40,7 +24,7 @@ static void face1_build(lv_obj_t* c) {
     label_date = label_weekday = NULL;
     img_battery = lbl_batt_pct = lbl_charge_icon = NULL;
 
-    add_background(c);
+    watchface_add_background(c);
 
     label_hour = lv_label_create(c);
     lv_obj_set_y(label_hour, -95);
@@ -92,47 +76,12 @@ static void face1_build(lv_obj_t* c) {
     lv_obj_set_style_text_font(label_weekday, &font_bold_32, 0);
     lv_obj_set_style_text_color(label_weekday, lv_color_hex(0xc0c0c0), LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    extern const lv_image_dsc_t image_battery_icon;
-    img_battery = lv_image_create(c);
-    lv_image_set_src(img_battery, &image_battery_icon);
-    lv_obj_set_align(img_battery, LV_ALIGN_TOP_MID);
-    lv_obj_set_x(img_battery, -100);
-    lv_obj_set_style_img_recolor_opa(img_battery, LV_OPA_COVER, 0);
-    lv_obj_set_style_img_recolor(img_battery, lv_color_hex(0x909090), 0);
-
-    lbl_batt_pct = lv_label_create(c);
-    lv_obj_align_to(lbl_batt_pct, img_battery, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
-    lv_obj_set_style_text_color(lbl_batt_pct, lv_color_hex(0xc0c0c0), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_label_set_text(lbl_batt_pct, "--%");
-    lv_obj_set_style_text_font(lbl_batt_pct, &font_normal_26, 0);
-
-    lbl_charge_icon = lv_label_create(img_battery);
-#ifdef LV_SYMBOL_CHARGE
-    lv_label_set_text(lbl_charge_icon, LV_SYMBOL_CHARGE);
-#else
-    lv_label_set_text(lbl_charge_icon, "⚡");
-#endif
-    lv_obj_center(lbl_charge_icon);
-    lv_obj_set_style_text_font(lbl_charge_icon, LV_FONT_DEFAULT, 0);
-    lv_obj_set_style_text_color(lbl_charge_icon, lv_color_white(), 0);
-    lv_obj_add_flag(lbl_charge_icon, LV_OBJ_FLAG_HIDDEN);
+    watchface_build_battery_widget(c, &img_battery, &lbl_batt_pct, &lbl_charge_icon);
 }
 
 static void face1_update_time(void) {
     // Caller (watchface.c dispatcher) already called rtc_refresh_now().
-    int hour = rtc_get_hour();
-    if (settings_get_time_24h()) {
-        if (label_hour) lv_label_set_text_fmt(label_hour, "%02d", hour);
-        if (label_ampm) lv_obj_add_flag(label_ampm, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        int h12 = hour % 12;
-        if (h12 == 0) h12 = 12;
-        if (label_hour) lv_label_set_text_fmt(label_hour, "%02d", h12);
-        if (label_ampm) {
-            lv_label_set_text(label_ampm, hour >= 12 ? "PM" : "AM");
-            lv_obj_clear_flag(label_ampm, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
+    watchface_update_hour_label(label_hour, label_ampm);
     if (label_minute) lv_label_set_text_fmt(label_minute, "%02d", rtc_get_minute());
     if (label_second) lv_label_set_text_fmt(label_second, "%02d", rtc_get_second());
 
@@ -145,24 +94,8 @@ static void face1_update_time(void) {
 }
 
 static void face1_update_power(bool vbus_in, bool charging, int battery_percent) {
-    if (!img_battery) return;
-    lv_color_t col = lv_color_hex(0x909090);
-    if (vbus_in)  col = lv_color_hex(0x00BFFF);
-    if (charging) col = lv_color_hex(0x00FF00);
-    lv_obj_set_style_img_recolor(img_battery, col, 0);
-    if (lbl_batt_pct) {
-        if (battery_percent >= 0 && battery_percent <= 100) {
-            static char buf[8];
-            lv_snprintf(buf, sizeof(buf), "%d%%", battery_percent);
-            lv_label_set_text(lbl_batt_pct, buf);
-        } else {
-            lv_label_set_text(lbl_batt_pct, "--%");
-        }
-    }
-    if (lbl_charge_icon) {
-        if (vbus_in || charging) lv_obj_clear_flag(lbl_charge_icon, LV_OBJ_FLAG_HIDDEN);
-        else                     lv_obj_add_flag(lbl_charge_icon, LV_OBJ_FLAG_HIDDEN);
-    }
+    watchface_update_battery_widget(img_battery, lbl_batt_pct, lbl_charge_icon,
+                                    vbus_in, charging, battery_percent);
 }
 
 const watchface_iface_t watchface_face1 = {

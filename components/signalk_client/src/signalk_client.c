@@ -354,7 +354,10 @@ static void open_ws(void) {
 
 static void wifi_evt(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg; (void)base; (void)data;
-    if (!s_want_wifi) return;
+    portENTER_CRITICAL(&s_mux);
+    bool want_wifi = s_want_wifi;
+    portEXIT_CRITICAL(&s_mux);
+    if (!want_wifi) return;
     if (id == WIFI_MGR_EVT_CONNECTED) {
         ESP_LOGI(TAG, "WiFi up — setting PS_MIN_MODEM + opening WS");
         // MIN (listen every beacon, ~100 ms typical) instead of MAX
@@ -363,9 +366,20 @@ static void wifi_evt(void *arg, esp_event_base_t base, int32_t id, void *data) {
         // pings time out, the AP drops the association, the WS errors out
         // moments after first data arrives.
         esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-        if (s_lifecycle_mux && xSemaphoreTake(s_lifecycle_mux, portMAX_DELAY) == pdTRUE) {
-            open_ws();
-            xSemaphoreGive(s_lifecycle_mux);
+        // Bounded wait: unlike signalk_client_start() (called from the app/UI
+        // task), this runs on the shared esp_event dispatch task — an unbounded
+        // portMAX_DELAY here would stall every other queued handler (and
+        // open_ws() itself can block on network I/O) if the lock is contended.
+        // Mirrors the timeout convention in signalk_client_stop(). If we miss
+        // the window, the next WIFI_MGR_EVT_CONNECTED (e.g. after a reconnect)
+        // resumes the WS path — see the DISCONNECTED branch below.
+        if (s_lifecycle_mux) {
+            if (xSemaphoreTake(s_lifecycle_mux, pdMS_TO_TICKS(300)) == pdTRUE) {
+                open_ws();
+                xSemaphoreGive(s_lifecycle_mux);
+            } else {
+                ESP_LOGW(TAG, "wifi_evt: lifecycle lock busy, deferring WS open to next reconnect");
+            }
         }
     } else if (id == WIFI_MGR_EVT_DISCONNECTED) {
         // Transient: wifi_manager attempts to reconnect on its own. Move
@@ -411,7 +425,9 @@ void signalk_client_start(void) {
         return;
     }
     ESP_LOGI(TAG, "start: waking WiFi for SignalK");
+    portENTER_CRITICAL(&s_mux);
     s_want_wifi = true;
+    portEXIT_CRITICAL(&s_mux);
     set_state(SIGNALK_STATE_WIFI_UP);
     // Claim the radio for the whole session — without this, ntp_sync's
     // "sync clock then release()" cycle (or the WiFi scan screen releasing
@@ -426,7 +442,9 @@ void signalk_client_start(void) {
     // a release.
     if (wifi_manager_wake() != ESP_OK) {
         wifi_manager_unhold();
+        portENTER_CRITICAL(&s_mux);
         s_want_wifi = false;
+        portEXIT_CRITICAL(&s_mux);
         set_state(SIGNALK_STATE_ERROR);
         return;
     }
@@ -445,14 +463,18 @@ void signalk_client_start(void) {
 void signalk_client_stop(void) {
     // s_want_wifi doubles as "we currently hold the radio" — it's set true
     // only alongside wifi_manager_hold() in start(), and this is the only
-    // place either gets cleared. Capture it before clearing so we unhold
-    // exactly once per matching hold (e.g. not when stop() is reached via
-    // the NO_CONFIG/WIFI_DISABLED early-returns in start(), which never hold).
+    // place either gets cleared. Capture-and-clear under s_mux (mirrors
+    // set_state/signalk_client_state) so a concurrent wifi_evt sees either
+    // the pre- or post-stop value, never a torn read, and so the disarm
+    // (clearing the flag before we contend for s_lifecycle_mux below, so
+    // wifi_evt → open_ws bails out instead of racing us for it) happens
+    // atomically with the "was holding" snapshot we need to unhold exactly
+    // once per matching hold (e.g. not when stop() is reached via the
+    // NO_CONFIG/WIFI_DISABLED early-returns in start(), which never hold).
+    portENTER_CRITICAL(&s_mux);
     bool was_holding = s_want_wifi;
-    // Disarm the wifi-event path before grabbing the lock so a concurrent
-    // wifi_evt → open_ws sees s_want_wifi == false and bails before
-    // contending here.
     s_want_wifi = false;
+    portEXIT_CRITICAL(&s_mux);
     // Use a bounded timeout so callers on the task-coordinator task (via the
     // display pre-off callback) don't block indefinitely if open_ws() is mid-
     // connect (network_timeout_ms = 5 s).  If we can't take the lock in time

@@ -42,31 +42,37 @@ esp_err_t bsp_rtc_init(void)
     return ESP_OK;
 }
 
-int rtc_register_read(uint8_t regAddr, uint8_t *data, uint8_t len) {
+esp_err_t rtc_register_read(uint8_t regAddr, uint8_t *data, uint8_t len) {
     esp_err_t ret = i2c_master_transmit_receive(rtc_dev_handle, &regAddr, 1, data, len, I2C_MASTER_TIMEOUT_MS);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "RTC READ FAILED!");
-        return -1;
+        ESP_LOGE(TAG, "RTC READ FAILED: %s", esp_err_to_name(ret));
     }
-    return 0;
+    return ret;
 }
 
-int rtc_register_write(uint8_t regAddr, uint8_t *data, uint8_t len) {
-    uint8_t *buffer = (uint8_t *)malloc(len + 1);
-    if (!buffer) return -1;
+esp_err_t rtc_register_write(uint8_t regAddr, uint8_t *data, uint8_t len) {
+    // PCF85063A's largest burst write is the 7-byte time-registers block
+    // (pcf85063a_set_time) — reject anything bigger rather than trusting an
+    // unbounded uint8_t into a stack buffer, and skip the malloc/free pair
+    // entirely; nothing this part needs ever exceeds a handful of bytes.
+    if (len > 7) return ESP_ERR_INVALID_ARG;
+
+    uint8_t buffer[8];
     buffer[0] = regAddr;
     memcpy(&buffer[1], data, len);
 
     esp_err_t ret = i2c_master_transmit(rtc_dev_handle, buffer, len + 1, I2C_MASTER_TIMEOUT_MS);
-    free(buffer);
-
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "RTC WRITE FAILED!");
-        return -1;
+        ESP_LOGE(TAG, "RTC WRITE FAILED: %s", esp_err_to_name(ret));
     }
-    return 0;
+    return ret;
 }
 
+// Lazy check-then-create on a static handle — only safe because every caller
+// of bsp_extra_touch_set_mode (display_manager's turn_on/turn_off and
+// touch_idle_check_cb) runs as a task_coordinator subscriber on the same
+// task. A caller from a different task would race on touch_dev_handle and
+// would need a lock.
 static esp_err_t bsp_touch_dev_init(void)
 {
     if (touch_dev_handle) return ESP_OK;

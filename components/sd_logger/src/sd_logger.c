@@ -32,6 +32,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <ctype.h>
 
 // fsync(2) is implemented by the VFS/FATFS layer (reaches f_sync on the FAT
 // volume) but esp-idf's bundled <unistd.h> doesn't declare it for this
@@ -119,8 +120,25 @@ static unsigned sd_log_next_index(void)
     if (dir) {
         struct dirent *ent;
         while ((ent = readdir(dir)) != NULL) {
+            // FatFs always stores 8.3 short names as upper-case bytes on
+            // disk, and with FF_USE_LFN == 0 (CONFIG_FATFS_LFN_NONE here)
+            // get_fileinfo()'s non-LFN path copies those raw bytes straight
+            // into d_name with no case conversion — so a file we created as
+            // "log00001.log" reads back as "LOG00001.LOG". A case-sensitive
+            // sscanf() against our lower-case scan format never matched, so
+            // max_index stayed 0 forever and every boot re-opened (and, via
+            // fopen's "w" mode, truncated) log00001.log instead of rotating.
+            // Lower-case a copy before matching so this is robust regardless
+            // of the case FatFs hands back.
+            char name[16];
+            size_t i = 0;
+            for (; i < sizeof(name) - 1 && ent->d_name[i] != '\0'; i++) {
+                name[i] = (char)tolower((unsigned char)ent->d_name[i]);
+            }
+            name[i] = '\0';
+
             unsigned idx;
-            if (sscanf(ent->d_name, SD_LOG_NAME_SCAN_FMT, &idx) == 1 && idx > max_index) {
+            if (sscanf(name, SD_LOG_NAME_SCAN_FMT, &idx) == 1 && idx > max_index) {
                 max_index = idx;
             }
         }

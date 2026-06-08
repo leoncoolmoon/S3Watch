@@ -90,6 +90,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
             uint16_t count = WIFI_MANAGER_MAX_SCAN_APS;
             wifi_ap_record_t recs[WIFI_MANAGER_MAX_SCAN_APS];
             esp_wifi_scan_get_ap_records(&count, recs);
+            xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
             s_scan_count = 0;
             for (int i = 0; i < count && s_scan_count < WIFI_MANAGER_MAX_SCAN_APS; i++) {
                 // Skip hidden SSIDs
@@ -110,6 +111,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
                 s_scan_results[s_scan_count].authmode = recs[i].authmode;
                 s_scan_count++;
             }
+            xSemaphoreGiveRecursive(s_lock);
             ESP_LOGI(TAG, "Scan done: %d networks", s_scan_count);
             esp_event_post(WIFI_MANAGER_EVENT_BASE, WIFI_MGR_EVT_SCAN_DONE,
                            NULL, 0, 0);
@@ -171,8 +173,10 @@ esp_err_t wifi_manager_scan(void)
 
 int wifi_manager_get_scan_results(wifi_manager_ap_t *out, int max_count)
 {
+    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
     int n = s_scan_count < max_count ? s_scan_count : max_count;
     memcpy(out, s_scan_results, n * sizeof(wifi_manager_ap_t));
+    xSemaphoreGiveRecursive(s_lock);
     return n;
 }
 

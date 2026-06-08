@@ -19,6 +19,10 @@ static void wifi_release_task(void *arg)
 
 static const char *TAG = "NTP_SYNC";
 static time_t s_last_sync = 0;
+// Guards s_last_sync: written from the SNTP/lwIP callback (on_sntp_sync),
+// read from the periodic check on task_coordinator's task. Mirrors
+// rtc_lib.c's s_time_mux/rtc_snapshot() pattern for cached-time scalars.
+static portMUX_TYPE s_sync_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static void on_sntp_sync(struct timeval *tv)
 {
@@ -33,7 +37,9 @@ static void on_sntp_sync(struct timeval *tv)
         return;
     }
     rtc_set_time(&t);
+    portENTER_CRITICAL(&s_sync_mux);
     s_last_sync = now;
+    portEXIT_CRITICAL(&s_sync_mux);
     ESP_LOGI(TAG, "RTC synced from NTP: %04d-%02d-%02d %02d:%02d:%02d UTC",
              t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
              t.tm_hour, t.tm_min, t.tm_sec);
@@ -96,7 +102,10 @@ void ntp_sync_check(void)
 {
     time_t now = time(NULL);
     if (now < (time_t)1735689600) return;
-    if (s_last_sync > 0 && (now - s_last_sync) < 86400) return;
+    portENTER_CRITICAL(&s_sync_mux);
+    time_t last_sync = s_last_sync;
+    portEXIT_CRITICAL(&s_sync_mux);
+    if (last_sync > 0 && (now - last_sync) < 86400) return;
     // Respect the user's WiFi permission — never wake radio if disabled.
     if (!settings_get_wifi_enabled()) return;
     if (wifi_manager_is_connected()) return; // already up, sync fires via event

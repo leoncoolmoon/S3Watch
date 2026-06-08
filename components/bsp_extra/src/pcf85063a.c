@@ -6,8 +6,8 @@
 
 static const char *TAG = "PCF85063A";
 
-extern int rtc_register_read(uint8_t regAddr, uint8_t *data, uint8_t len);
-extern int rtc_register_write(uint8_t regAddr, uint8_t *data, uint8_t len);
+extern esp_err_t rtc_register_read(uint8_t regAddr, uint8_t *data, uint8_t len);
+extern esp_err_t rtc_register_write(uint8_t regAddr, uint8_t *data, uint8_t len);
 
 static uint8_t dec_to_bcd(uint8_t val)
 {
@@ -30,7 +30,7 @@ static uint8_t bcd_to_dec(uint8_t val)
  */
 uint32_t getDayOfWeek(uint32_t day, uint32_t month, uint32_t year)
 {
-    if (day < 1 || day > 31 || month < 1 || month > 12) {
+    if (day < 1 || day > 31 || month < 1 || month > 12 || year < 1900) {
         return 0xFF;
     }
     if (month < 3) {

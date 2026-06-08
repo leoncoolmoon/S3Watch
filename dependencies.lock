@@ -1,6 +1,6 @@
 dependencies:
   esp32_s3_touch_amoled_2_06:
-    component_hash: fae432aa7b9c3276076c24310854edae36d3e7c03f020bf2a8a053e9e2956fe1
+    component_hash: 0f755094c96edfdb55534c7b758c2c24228b314b76185a6a4eb9d5ed64c865fd
     dependencies:
     - name: espressif/esp_codec_dev
       public: true
@@ -24,7 +24,7 @@ dependencies:
       type: git
     targets:
     - esp32s3
-    version: aff595c4069bc4af4d31b830f0cbbf63c4344b2f
+    version: 0d81318ea4162bc2ff322358fc972eb03f0b1384
   espressif/cmake_utilities:
     component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
     dependencies:
