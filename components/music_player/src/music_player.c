@@ -19,13 +19,13 @@
 #include "bsp/esp32_s3_touch_amoled_2_06.h"
 #include "audio_alert.h"
 #include "settings.h"
+#include "power_manager.h"
 
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_codec_dev.h"
 #include "esp_heap_caps.h"
 #include "esp_random.h"
-#include "esp_pm.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -238,36 +238,10 @@ static esp_codec_dev_handle_t      s_spk = NULL;
 static bool                        s_codec_open = false;
 static esp_codec_dev_sample_info_t s_codec_fmt  = {0};
 
-// display_manager holds its own ESP_PM_NO_LIGHT_SLEEP lock, but only while the
-// screen is on — it's released the moment the panel sleeps (see "PM lock
-// released — CPU may enter light sleep" in display_turn_off_internal()), which
-// is exactly when this app's "sounds great with the display on, staticy once
-// it sleeps" symptom appears. esp_codec_dev/I2S separately holds an
-// APB_FREQ_MAX lock while its channel is enabled (keeps the APB clock pinned
-// so DFS can't shift it underneath the I2S clock divider — see the comment by
-// audio_alert.c's esp_codec_dev_close() call), but that's a different lock
-// type: it doesn't stop the CPU from entering automatic light sleep, which is
-// what was glitching the I2S clock and coming out as static (not dropouts —
-// the DMA itself stayed fed; see music_feed_task). So: our own lock, held
-// for exactly as long as the codec is physically open, regardless of what the
-// display is doing.
-#if CONFIG_PM_ENABLE
-static esp_pm_lock_handle_t s_no_ls_lock = NULL;
-#endif
-
-static void no_light_sleep_acquire(void)
-{
-#if CONFIG_PM_ENABLE
-    if (s_no_ls_lock) (void)esp_pm_lock_acquire(s_no_ls_lock);
-#endif
-}
-
-static void no_light_sleep_release(void)
-{
-#if CONFIG_PM_ENABLE
-    if (s_no_ls_lock) (void)esp_pm_lock_release(s_no_ls_lock);
-#endif
-}
+// power_manager provides a unified reference-counted ESP_PM_NO_LIGHT_SLEEP lock
+// and ALDO rail management — no separate lock or BSP rail call needed here.
+static void no_light_sleep_acquire(void) { power_manager_no_sleep_hold(); }
+static void no_light_sleep_release(void) { power_manager_no_sleep_release(); }
 
 static QueueHandle_t s_cmd_queue = NULL;
 static TaskHandle_t  s_task      = NULL;
@@ -355,8 +329,10 @@ static bool open_codec(int hz, int channels)
     }
     s_codec_fmt  = fs;
     s_codec_open = true;
-    // Held for exactly as long as the I2S channel is enabled — see s_no_ls_lock.
+    // Hold no-light-sleep lock and ALDO rails for exactly as long as the codec
+    // is open — power_manager manages both centrally.
     no_light_sleep_acquire();
+    power_manager_rail_hold(PM_RAIL_CLIENT_AUDIO);
 
     int vol = (int)settings_get_notify_volume();
     if (vol < 0) vol = 0;
@@ -379,6 +355,7 @@ static void close_codec(void)
     esp_codec_dev_close(s_spk);
     s_codec_open = false;
     no_light_sleep_release();
+    power_manager_rail_release(PM_RAIL_CLIENT_AUDIO);
 }
 
 // The sole consumer of s_pcm_stream and the only thing that calls
@@ -669,17 +646,6 @@ static bool ensure_engine_started(void)
     }
     s_spk = audio_alert_acquire_speaker();
     if (!s_spk) return false;
-
-#if CONFIG_PM_ENABLE
-    if (!s_no_ls_lock) {
-        // See s_no_ls_lock's comment — must exist before open_codec() can ever
-        // run, so create it up front rather than lazily inside that hot path.
-        (void)esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "music_player", &s_no_ls_lock);
-        if (!s_no_ls_lock) {
-            ESP_LOGW(TAG, "Failed to create no-light-sleep lock — playback may glitch with display off");
-        }
-    }
-#endif
 
     s_cmd_queue = xQueueCreate(CMD_QUEUE_LEN, sizeof(player_cmd_t));
     if (!s_cmd_queue) goto fail;

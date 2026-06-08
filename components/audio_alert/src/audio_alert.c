@@ -6,6 +6,7 @@
 #include "bsp/esp32_s3_touch_amoled_2_06.h"
 #include "esp_codec_dev.h"
 #include "settings.h"
+#include "power_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
@@ -18,6 +19,12 @@ static esp_codec_dev_handle_t s_spk = NULL;
 static bool s_ready = false;
 static bool s_open = false;
 
+static void audio_pm_cb(pm_event_t evt, void *ctx)
+{
+    (void)ctx;
+    if (evt == PM_EVT_PREPARE_SLEEP) audio_alert_suspend();
+}
+
 esp_err_t audio_alert_init(void)
 {
     if (s_ready) return ESP_OK;
@@ -26,6 +33,7 @@ esp_err_t audio_alert_init(void)
         ESP_LOGE(TAG, "speaker init failed");
         return ESP_FAIL;
     }
+    power_manager_add_listener(audio_pm_cb, NULL);
     s_ready = true;
     return ESP_OK;
 }

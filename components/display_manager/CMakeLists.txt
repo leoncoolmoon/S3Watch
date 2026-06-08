@@ -1,5 +1,5 @@
 idf_component_register(
     SRCS "display_manager.c"
     INCLUDE_DIRS "include"
-    REQUIRES lvgl settings esp32_s3_touch_amoled_2_06 audio_alert bsp_extra task_coordinator
+    REQUIRES lvgl settings esp32_s3_touch_amoled_2_06 bsp_extra task_coordinator power_manager
 )

@@ -42,6 +42,6 @@
     "--compile-commands-dir=d:\\Work\\ESP32-S3-Touch-AMOLED\\S3Watch\\Firmware\\S3Watch\\build"
   ],
   "idf.currentSetup": "/Users/rich/.espressif/v5.5.4/esp-idf",
-  "idf.port": "/dev/tty.usbmodem14101",
-  "idf.monitorPort": "/dev/tty.usbmodem14101"
+  "idf.port": "/dev/tty.usbmodem14201",
+  "idf.monitorPort": "/dev/tty.usbmodem14201"
 }

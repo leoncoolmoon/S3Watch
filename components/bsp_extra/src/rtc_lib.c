@@ -6,6 +6,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_log.h"
+#include "power_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -86,6 +87,13 @@ static void rtc_sync_from_hw(void)
     portEXIT_CRITICAL(&s_time_mux);
 }
 
+static void rtc_pm_cb(pm_event_t evt, void *ctx)
+{
+    (void)ctx;
+    if (evt == PM_EVT_PREPARE_SLEEP) rtc_suspend();
+    else if (evt == PM_EVT_WOKE_UP)  rtc_resume();
+}
+
 esp_err_t rtc_start(void)
 {
     esp_err_t ret = pcf85063a_init();
@@ -93,6 +101,9 @@ esp_err_t rtc_start(void)
 
     // Initial sync from hardware → ESP32 internal time.
     rtc_sync_from_hw();
+
+    // Register power transitions: checkpoint time on sleep, resync on wake.
+    power_manager_add_listener(rtc_pm_cb, NULL);
     return ESP_OK;
 }
 

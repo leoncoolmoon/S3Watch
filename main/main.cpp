@@ -5,6 +5,7 @@
 #include "bsp/esp-bsp.h"
 #include "bsp_board_extra.h"
 #include "display_manager.h"
+#include "power_manager.h"
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_event.h"
@@ -14,7 +15,6 @@
 #include "settings.h"
 #include "ui.h"
 #include "esp_sleep.h"
-#include "esp_pm.h"
 #include "audio_alert.h"
 #include "nvs_flash.h"
 #include "wifi_manager.h"
@@ -40,13 +40,6 @@ extern "C" void app_main(void) {
   // Create default event loop for component event handlers
   esp_event_loop_create_default();
 
-  // Block light-sleep during boot and UI/display bring-up
-  display_manager_pm_early_init();
-
-  // Enable Dynamic Frequency Scaling + automatic light sleep so CPU idles low
-  // BLE remains active; display_manager controls light-sleep via a PM lock
-  // Defer PM config until after BSP and BLE init
-
   // Initialize I2C bus first so AXP2101 can be configured before the BSP
   // tries to talk to the FT5x06 touch controller on the same bus.
   // bsp_i2c_init() is idempotent — subsequent calls from bsp_display_start()
@@ -54,15 +47,12 @@ extern "C" void app_main(void) {
   bsp_i2c_init();
   bsp_extra_init();   // initializes AXP2101, sets bsp_power s_ready = true
 
-  // On cold boot the AXP2101 ALDO LDO outputs start disabled. The BSP only
-  // enables them in bsp_display_wake(), not during the initial bsp_display_start().
-  // Explicitly enable ALDO1-4 here so the FT5x06 touch controller has power before
-  // bsp_display_start() tries to initialize it over I2C.
-  bsp_power_enable_aldo1(true);
-  bsp_power_enable_aldo2(true);
-  bsp_power_enable_aldo3(true);
-  bsp_power_enable_aldo4(true);
-  vTaskDelay(pdMS_TO_TICKS(50)); // let rails stabilize
+  // power_manager_init() does three things needed before display/UI starts:
+  //   1. Creates and acquires the NO_LIGHT_SLEEP lock (blocks light-sleep during boot)
+  //   2. Calls esp_pm_configure() (activates DFS + tickless idle; lock prevents early sleep)
+  //   3. Enables all ALDO rails + 50 ms settle (FT5x06 needs power before bsp_display_start)
+  //   4. Initialises task_coordinator and subscribes PMU/wake-button callbacks
+  power_manager_init();
 
   bsp_display_start();
 
@@ -98,12 +88,4 @@ extern "C" void app_main(void) {
 
   // Play a subtle startup tone once the system is up
   audio_alert_play_startup();
-
-  // Enable PM — light sleep allowed; display_manager blocks it while screen is on
-  esp_pm_config_t pm_cfg = {
-      .max_freq_mhz = 240,
-      .min_freq_mhz = 40,
-      .light_sleep_enable = true,
-  };
-  ESP_ERROR_CHECK(esp_pm_configure(&pm_cfg));
 }

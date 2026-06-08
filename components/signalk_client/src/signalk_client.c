@@ -19,7 +19,7 @@
 #include "signalk_alert_parse.h"
 #include "settings.h"
 #include "wifi_manager.h"
-#include "display_manager.h"
+#include "power_manager.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -392,10 +392,10 @@ static void wifi_evt(void *arg, esp_event_base_t base, int32_t id, void *data) {
     }
 }
 
-static void on_display_pre_off(void) {
-    // Called inside display_manager turn-off path. Mirrors what the tile-leave
-    // hook does so that timing out on the dashboard fully releases the radio.
-    signalk_client_stop();
+static void on_pm_event(pm_event_t evt, void *ctx)
+{
+    (void)ctx;
+    if (evt == PM_EVT_PREPARE_SLEEP) signalk_client_stop();
 }
 
 void signalk_client_init(void) {
@@ -404,7 +404,7 @@ void signalk_client_init(void) {
     if (!s_lifecycle_mux) s_lifecycle_mux = xSemaphoreCreateMutex();
     esp_event_handler_register(WIFI_MANAGER_EVENT_BASE, ESP_EVENT_ANY_ID,
                                 wifi_evt, NULL);
-    display_manager_set_pre_off_cb(on_display_pre_off);
+    power_manager_add_listener(on_pm_event, NULL);
     set_state(SIGNALK_STATE_IDLE);
 }
 

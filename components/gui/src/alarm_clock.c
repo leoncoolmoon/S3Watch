@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "audio_alert.h"
 #include "display_manager.h"
+#include "power_manager.h"
 #include "task_coordinator.h"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
@@ -122,7 +123,7 @@ static void alarm_tick_cb(void *user)
         s_last_fired_hour = now.tm_hour;
         s_last_fired_min  = now.tm_min;
         ESP_LOGI(TAG, "alarm firing at %02d:%02d", s_alarm_hour, s_alarm_min);
-        display_manager_turn_on();
+        power_manager_request_wake(PM_WAKE_ALARM);
         display_manager_reset_timer();
         audio_alert_notify();
         if (bsp_display_lock(50)) {
