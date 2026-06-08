@@ -30,6 +30,12 @@ esp_err_t audio_alert_init(void)
     return ESP_OK;
 }
 
+esp_codec_dev_handle_t audio_alert_acquire_speaker(void)
+{
+    if (!s_ready && audio_alert_init() != ESP_OK) return NULL;
+    return s_spk;
+}
+
 static void play_pcm_16_mono_22k(const int16_t* pcm, size_t samples)
 {
     if (!s_ready && audio_alert_init() != ESP_OK) return;

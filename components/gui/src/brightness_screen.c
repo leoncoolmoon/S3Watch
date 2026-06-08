@@ -42,12 +42,9 @@ void lv_smartwatch_brightness_create(lv_obj_t* screen)
     lv_obj_set_size(brightness_screen, lv_pct(100), lv_pct(100));
     // Allow gestures on children to bubble up so tileview can handle swipes
     lv_obj_add_flag(brightness_screen, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    //lv_obj_clear_flag(brightness_screen, LV_OBJ_FLAG_SCROLLABLE);
-
 
     lv_obj_t* hdr_card = lv_obj_create(brightness_screen);
     lv_obj_remove_style_all(hdr_card);
-    //lv_obj_set_size(hdr_card, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(hdr_card, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(hdr_card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_SPACE_EVENLY);
     lv_obj_set_size(hdr_card, lv_pct(100), LV_SIZE_CONTENT);
@@ -60,15 +57,7 @@ void lv_smartwatch_brightness_create(lv_obj_t* screen)
     lv_obj_t* brightness_title_label = lv_label_create(hdr_card);
     lv_obj_set_style_text_font(brightness_title_label, &font_bold_32, 0);
     lv_label_set_text(brightness_title_label, "Brightness");
-    //lv_obj_set_style_pad_bottom(brightness_title_label, 30, 0);
-    //lv_obj_set_align(brightness_title_label, LV_ALIGN_TOP_MID);
     lv_obj_set_y(brightness_title_label, 10);
-
-    // Layout
-    //lv_obj_set_flex_flow(brightness_screen, LV_FLEX_FLOW_COLUMN);
-    //lv_obj_set_flex_align(brightness_screen, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    //lv_obj_set_style_pad_all(brightness_screen, 24, 0);
-    //lv_obj_set_style_pad_row(brightness_screen, 18, 0);
 
     // Big percent label
     percent_label = lv_label_create(brightness_screen);

@@ -22,10 +22,6 @@ static void on_delete(lv_event_t* e);
 static lv_obj_t* smenu_content;
 static lv_obj_t* r2;
 static lv_obj_t* r3;
-static lv_obj_t* r4;
-static lv_obj_t* r5;
-static lv_obj_t* r6;
-static lv_obj_t* r7;
 static lv_obj_t* r8;
 static lv_obj_t* r9;
 
@@ -68,9 +64,6 @@ static void screen_events(lv_event_t* e)
             smenu_screen = NULL;
         }
     }
-    /*else if (lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) {
-        refresh_values(smenu_content);
-    }*/
 }
 
 static lv_obj_t* make_row(lv_obj_t* parent, const char* icon, const char* label_txt, const char* value_txt, lv_event_cb_t cb)
@@ -151,11 +144,11 @@ void settings_menu_screen_create(lv_obj_t* parent)
 
     r2 = make_row(smenu_content, LV_SYMBOL_SETTINGS, "Display Timeout", "--", open_timeout);
     r3 = make_row(smenu_content, LV_SYMBOL_AUDIO, "Sound", "--", open_sound);
-    r4 = make_row(smenu_content, LV_SYMBOL_SAVE, "Storage", "Tools", open_storage);
-    r5 = make_row(smenu_content, LV_SYMBOL_EDIT, "Set Time", "", open_time);
+    (void)make_row(smenu_content, LV_SYMBOL_SAVE, "Storage", "Tools", open_storage);
+    (void)make_row(smenu_content, LV_SYMBOL_EDIT, "Set Time", "", open_time);
     (void)make_row(smenu_content, LV_SYMBOL_GPS, "Time Zone", "", open_tz);
-    r6 = make_row(smenu_content, LV_SYMBOL_WIFI, "Wi-Fi", "", open_wifi);
-    r7 = make_row(smenu_content, LV_SYMBOL_REFRESH, "NTP Server", "", open_ntp);
+    (void)make_row(smenu_content, LV_SYMBOL_WIFI, "Wi-Fi", "", open_wifi);
+    (void)make_row(smenu_content, LV_SYMBOL_REFRESH, "NTP Server", "", open_ntp);
     (void)make_row(smenu_content, LV_SYMBOL_UPLOAD, "SignalK", "", open_signalk);
     r8 = make_row(smenu_content, NULL, "Time Format", settings_get_time_24h() ? "24h" : "12h", open_time_format);
     r9 = make_row(smenu_content, NULL, "Watch Face", settings_get_watchface_style() == 0 ? "Face 1" : "Face 2", open_watchface);

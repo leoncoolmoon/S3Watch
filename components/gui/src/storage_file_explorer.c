@@ -22,17 +22,7 @@ static void screen_events(lv_event_t* e)
     }
 }
 
-#if 0
-#include "lvgl_spiffs_fs.h"
-static void create_explorer_1(lv_obj_t* parent)
-{
-    lv_obj_t* fe = lv_file_explorer_create(parent);
-    lv_obj_set_size(fe, lv_pct(100), lv_pct(100));
-    lv_file_explorer_open_dir(fe, "S:/");
-    lv_file_explorer_set_sort(fe, LV_EXPLORER_SORT_KIND);
-}
-#else
-// Fallback: simple list of files from /spiffs using POSIX APIs
+// Simple list of files from /spiffs using POSIX APIs
 static void create_explorer_2(lv_obj_t* parent)
 {
     lv_obj_t* list = lv_list_create(parent);
@@ -56,7 +46,6 @@ static void create_explorer_2(lv_obj_t* parent)
     }
     closedir(dir);
 }
-#endif
 
 void storage_file_explorer_screen_create(lv_obj_t* parent)
 {
@@ -97,7 +86,6 @@ void storage_file_explorer_screen_create(lv_obj_t* parent)
     lv_obj_set_style_pad_right(content, 12, 0);*/
     lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
 
-    //create_explorer_1(content);
     create_explorer_2(content);
 }
 

@@ -12,6 +12,7 @@
 #include "stopwatch.h"
 #include "alarm_clock.h"
 #include "calendar_app.h"
+#include "music_app.h"
 #include "esp_log.h"
 #include "lvgl.h"
 
@@ -34,12 +35,14 @@ LV_IMAGE_DECLARE(image_worldclock_icon);
 LV_IMAGE_DECLARE(image_stopwatch_icon);
 LV_IMAGE_DECLARE(image_alarmclock_icon);
 LV_IMAGE_DECLARE(image_calendar_icon);
+LV_IMAGE_DECLARE(image_music_icon);
 
-static void launch_signalk(lv_obj_t *tile)      { signalk_dashboard_create(tile); }
+static void launch_signalk(lv_obj_t *tile)      { signalk_dashboard_create(tile); ui_app_tile_mark_signalk(); }
 static void launch_world_clock(lv_obj_t *tile)  { world_clock_create(tile); }
 static void launch_stopwatch(lv_obj_t *tile)    { stopwatch_create(tile); }
 static void launch_alarm(lv_obj_t *tile)        { alarm_clock_create(tile); }
 static void launch_calendar(lv_obj_t *tile)     { calendar_app_create(tile); }
+static void launch_music(lv_obj_t *tile)        { music_app_create(tile); }
 
 static const app_entry_t s_apps[] = {
     { "SignalK",     &image_signalk_icon,    launch_signalk     },
@@ -47,6 +50,7 @@ static const app_entry_t s_apps[] = {
     { "Stopwatch",   &image_stopwatch_icon,  launch_stopwatch   },
     { "Alarm",       &image_alarmclock_icon, launch_alarm       },
     { "Calendar",    &image_calendar_icon,   launch_calendar    },
+    { "Music",       &image_music_icon,      launch_music       },
 };
 static const int s_app_count = sizeof(s_apps) / sizeof(s_apps[0]);
 

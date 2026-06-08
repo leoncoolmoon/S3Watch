@@ -8,6 +8,7 @@
 #include "settings_menu_screen.h"
 #include "rtc_lib.h"
 #include "wifi_manager.h"
+#include "music_player.h"
 
 #include "ui.h"
 #include "watchface.h"
@@ -26,10 +27,12 @@ static void click_event_cb(lv_event_t* e);
 static void toggle_event_cb(lv_event_t* e);
 static void time_timer_cb(lv_timer_t* timer);
 static void update_time_label(void);
+static void update_now_playing_label(void);
 static void control_screen_on_delete(lv_event_t* e);
 
 static lv_obj_t* control_screen;
 static lv_obj_t* time_label;
+static lv_obj_t* now_playing_label;
 static lv_timer_t* time_timer;
 
 // NULL icon = use LVGL symbol text instead of an image
@@ -75,11 +78,35 @@ static void update_time_label(void)
     }
 }
 
+// Always-reachable "now playing" feedback for the music app's confirmed
+// background-playback design — the engine runs on its own task regardless of
+// which screen is showing, so this is the one place every user passes through
+// (the controls tile, reached straight off the watchface) that can surface it
+// without requiring the Music app to be open. Hidden whenever nothing has
+// ever been loaded; piggybacks on the existing 1 s clock timer/lock below
+// rather than adding a second timer for what is purely cosmetic, slow-changing
+// state.
+static void update_now_playing_label(void)
+{
+    if (!now_playing_label) return;
+    music_now_playing_t np;
+    music_player_get_now_playing(&np);
+    if (!np.active) {
+        lv_obj_add_flag(now_playing_label, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(now_playing_label, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text_fmt(now_playing_label, "%s %s \xE2\x80\x94 %s",
+                          np.playing ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE,
+                          np.title, np.artist);
+}
+
 static void time_timer_cb(lv_timer_t* timer)
 {
     (void)timer;
     bool locked = bsp_display_lock(0);
     update_time_label();
+    update_now_playing_label();
     if (locked) bsp_display_unlock();
 }
 
@@ -88,6 +115,7 @@ static void control_screen_on_delete(lv_event_t* e)
     (void)e;
     if (time_timer) { lv_timer_del(time_timer); time_timer = NULL; }
     time_label = NULL;
+    now_playing_label = NULL;
     control_screen = NULL;
 }
 
@@ -125,6 +153,18 @@ void control_screen_create(lv_obj_t* parent)
     lv_obj_set_style_text_font(time_label, &font_bold_32, 0);
     lv_obj_set_style_text_color(time_label, lv_color_white(), 0);
     lv_label_set_text(time_label, "--:--");
+
+    // "Now playing" mini-indicator — see update_now_playing_label(). Hidden
+    // until a track has ever loaded.
+    now_playing_label = lv_label_create(control_screen);
+    lv_obj_set_style_text_font(now_playing_label, &font_normal_26, 0);
+    lv_obj_set_style_text_color(now_playing_label, lv_color_hex(0xAAAAAA), 0);
+    lv_label_set_long_mode(now_playing_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(now_playing_label, lv_pct(86));
+    lv_obj_set_style_text_align(now_playing_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_pad_bottom(now_playing_label, 4, 0);
+    lv_obj_remove_flag(now_playing_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(now_playing_label, LV_OBJ_FLAG_HIDDEN);
 
     // Button grid: 2 columns, up to 4 rows (8 buttons)
     lv_obj_t* grid = lv_obj_create(control_screen);
@@ -192,6 +232,7 @@ void control_screen_create(lv_obj_t* parent)
     }
 
     update_time_label();
+    update_now_playing_label();
     if (!time_timer) {
         time_timer = lv_timer_create(time_timer_cb, 1000, NULL);
         lv_timer_ready(time_timer);

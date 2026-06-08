@@ -2,7 +2,7 @@
 
 Custom smartwatch firmware built on ESP-IDF 5.x and LVGL 9, targeting the [Waveshare ESP32-S3-Touch-AMOLED-2.06](https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-2.06) development board.
 
-Originally a general-purpose smartwatch; now also a passive viewer for boat data via [SignalK](https://signalk.org/) — swipe up for an app picker (SignalK dashboard, World Clock, Stopwatch, Alarm, Calendar), swipe down for the boat's currently-active alarms/notifications.
+Originally a general-purpose smartwatch; now also a passive viewer for boat data via [SignalK](https://signalk.org/) — swipe up for an app picker (SignalK dashboard, World Clock, Stopwatch, Alarm, Calendar, Music), swipe down for the boat's currently-active alarms/notifications.
 
 <img src="ui_assets/s3watch_0.jpg" width="300"/> <img src="ui_assets/s3watch_1.jpg" width="300"/>
 
@@ -21,12 +21,13 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
 - **Wi-Fi settings** — scan, connect via on-screen keyboard, NTP server entry
 
 ### App picker
-- **App launcher tile** — swipe up from the watchface opens a scrollable 2-column icon grid (background follows the active watchface background). Tapping an icon slides a dynamic full-screen app in from the right; swipe left or use Back to return to the picker. Currently five apps:
+- **App launcher tile** — swipe up from the watchface opens a scrollable 2-column icon grid (background follows the active watchface background). Tapping an icon slides a dynamic full-screen app in from the right; swipe left or use Back to return to the picker. Currently six apps:
   - **SignalK** — the marine dashboard (below)
   - **World Clock** — scrollable list of cities with live local times and day-offset badges (handles DST correctly via POSIX TZ strings)
   - **Stopwatch** — start/stop/lap/reset with centisecond precision (`esp_timer_get_time()`), persists state across app open/close, up to 50 laps
   - **Alarm Clock** — single daily alarm with hour/minute rollers, on/off toggle, dismiss button; fires even while the display is asleep (wakes the display, plays the alert sound, repeats every 30 s until dismissed)
   - **Calendar** — read-only monthly reference view (LVGL `lv_calendar`) with today highlighted and built-in header arrows to page to the previous/next month; no events or notifications
+  - **Music** — Artist → Album → Track browser + Now Playing screen, streaming MP3s straight off the SD card (catalog driven by an `INDEX.JSN` built by the [music-sync](doc/music-sync/) tool); playback runs in its own background task so it keeps going while you navigate elsewhere
 
 ### SignalK marine extension
 - **SignalK dashboard app** — launched from the app picker. 2×2 grid of live values in **American nautical units**:
@@ -71,7 +72,7 @@ The UI is a 2D tileview anchored on the watchface. All transitions are gesture-d
                        │     App Picker (0,2)       │ ───────────────────────▶ │   Dynamic App Tile (1,2)   │
                        │ SignalK · World Clock ·    │ ◀─────────────────────── │ SignalK / World Clock /    │
                        │ Stopwatch · Alarm ·        │   swipe left / Back      │ Stopwatch / Alarm Clock /  │
-                       │ Calendar                   │                          │ Calendar                   │
+                       │ Calendar · Music           │                          │ Calendar / Music           │
                        └────────────────────────────┘                          └────────────────────────────┘
 ```
 
@@ -187,6 +188,7 @@ S3Watch/
 │   │   │   ├── stopwatch.c                     # Stopwatch app
 │   │   │   ├── alarm_clock.c                   # Alarm Clock app
 │   │   │   ├── calendar_app.c                  # Calendar app (lv_calendar wrapper)
+│   │   │   ├── music_app.c                     # Music app — Artist/Album/Track browser + Now Playing UI
 │   │   │   ├── signalk_dashboard.c             # SignalK app (launched from app picker)
 │   │   │   ├── signalk_dashboard_fmt.c         # Pure formatters (testable)
 │   │   │   ├── signalk_alerts.c                # SignalK alarms tile (swipe down)
@@ -214,6 +216,7 @@ S3Watch/
 │   ├── wifi_manager/                           # Wi-Fi scan/connect/auto/release; event bus
 │   ├── ntp_sync/                               # SNTP; fires on connect, releases on success
 │   ├── audio_alert/                            # ES8311 init, WAV/MP3 decode, synth fallback
+│   ├── music_player/                           # SD-card MP3 catalog + streaming playback engine
 │   ├── sd_logger/                              # Mirrors ESP_LOG to /sdcard/logs/ when enabled
 │   ├── sensors/                                # QMI8658 power-down + test-hook accel read
 │   ├── signalk_client/                         # WebSocket client; value + alert caches
@@ -323,7 +326,7 @@ Managed via the ESP-IDF Component Manager:
 | `esp32_s3_touch_amoled_2_06` | [`github.com/richcreations/esp32_s3_touch_amoled_2_06`](https://github.com/richcreations/esp32_s3_touch_amoled_2_06) | Board BSP |
 | `waveshare/qmi8658` | Component registry | IMU driver |
 | `espressif/esp_codec_dev` | Component registry | Audio codec abstraction |
-| `minimp3` | Vendored in `audio_alert/third_party/` | Lightweight MP3 decoder |
+| `minimp3` | Vendored in `music_player/third_party/` | Lightweight MP3 decoder (streaming I/O — see Music app) |
 
 ---
 

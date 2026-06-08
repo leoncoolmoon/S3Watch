@@ -29,6 +29,7 @@ static lv_obj_t* tile_picker     = NULL;  // app picker         (0,2)
 static lv_obj_t* dynamic_tile    = NULL;  // settings menu / etc. (2,1)
 static lv_obj_t* dynamic_subtile = NULL;  // settings sub-screens (3,1)
 static lv_obj_t* s_app_tile      = NULL;  // dynamic app screen (1,2)
+static bool      s_app_tile_is_signalk = false;  // does (1,2) currently host the SignalK dashboard?
 
 void ui_tileview_back(void) {
   if (active_screen_get() != get_main_screen()) {
@@ -61,10 +62,13 @@ static void tileview_change_cb(lv_event_t* e) {
   // Any SignalK tile (app tile hosting the dashboard, OR alerts) brings WiFi +
   // WS up on enter, tears them down on leave to a non-signalk tile.
   // signalk_client_{start,stop} are idempotent and no-op when host is empty.
+  // Note: the app tile (1,2) is shared by every app — only treat it as a
+  // SignalK tile when the dashboard is what's actually loaded into it,
+  // otherwise opening Stopwatch/Music/etc. would needlessly wake WiFi.
   {
     static lv_obj_t* prev_sk = NULL;
-    bool act_is_sk  = (act     == s_app_tile || act     == tile_alerts);
-    bool prev_is_sk = (prev_sk == s_app_tile || prev_sk == tile_alerts);
+    bool act_is_sk  = (act     == tile_alerts) || (act     == s_app_tile && s_app_tile_is_signalk);
+    bool prev_is_sk = (prev_sk == tile_alerts) || (prev_sk == s_app_tile && s_app_tile_is_signalk);
     if (act_is_sk && !prev_is_sk) {
       ESP_LOGI(TAG, "Entering SignalK tile — starting client");
       signalk_client_start();
@@ -233,6 +237,9 @@ void ui_tileview_reset_to_watchface(void) {
 
 lv_obj_t* ui_app_tile_acquire(void) {
   if (!main_screen) return NULL;
+  // Default to "not SignalK" for whatever gets launched into this slot next;
+  // launch_signalk() re-marks it via ui_app_tile_mark_signalk() right after.
+  s_app_tile_is_signalk = false;
   if (s_app_tile) {
     lv_obj_clean(s_app_tile);
     ESP_LOGI(TAG, "Reusing app tile (1,2)");
@@ -244,6 +251,10 @@ lv_obj_t* ui_app_tile_acquire(void) {
     ESP_LOGI(TAG, "Created app tile (1,2)");
   }
   return s_app_tile;
+}
+
+void ui_app_tile_mark_signalk(void) {
+  s_app_tile_is_signalk = true;
 }
 
 void ui_app_tile_show(void) {
