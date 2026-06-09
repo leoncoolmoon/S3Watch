@@ -17,13 +17,11 @@
 #include "music_catalog.h"
 
 #include "bsp/esp32_s3_touch_amoled_2_06.h"
-#include "audio_alert.h"
+#include "audio_manager.h"
 #include "settings.h"
-#include "power_manager.h"
 
 #include "esp_log.h"
 #include "esp_err.h"
-#include "esp_codec_dev.h"
 #include "esp_heap_caps.h"
 #include "esp_random.h"
 
@@ -202,6 +200,8 @@ typedef enum {
     CMD_TOGGLE_PLAY_PAUSE,
     CMD_NEXT,
     CMD_PREV,
+    CMD_PAUSE,   // triggered by audio_manager when NOTIFY preempts: flush + close + signal s_pause_done
+    CMD_RESUME,  // triggered by audio_manager after NOTIFY finishes: reopen + set_playing
 } player_cmd_type_t;
 
 typedef struct {
@@ -233,15 +233,6 @@ static int16_t    *s_pcm_buf  = NULL;
 // outlive the decoder (hence static, not stack-local).
 static FILE        *s_file = NULL;
 static mp3dec_io_t  s_io;
-
-static esp_codec_dev_handle_t      s_spk = NULL;
-static bool                        s_codec_open = false;
-static esp_codec_dev_sample_info_t s_codec_fmt  = {0};
-
-// power_manager provides a unified reference-counted ESP_PM_NO_LIGHT_SLEEP lock
-// and ALDO rail management — no separate lock or BSP rail call needed here.
-static void no_light_sleep_acquire(void) { power_manager_no_sleep_hold(); }
-static void no_light_sleep_release(void) { power_manager_no_sleep_release(); }
 
 static QueueHandle_t s_cmd_queue = NULL;
 static TaskHandle_t  s_task      = NULL;
@@ -306,56 +297,20 @@ static TaskHandle_t         s_feed_task  = NULL;
 // it without racing itself) to do it, and block on s_flush_done until it has.
 static volatile bool     s_flush_req  = false;
 static SemaphoreHandle_t s_flush_done = NULL;
+static SemaphoreHandle_t s_pause_done = NULL; // signalled by CMD_PAUSE after codec closed
 
 static bool open_codec(int hz, int channels)
 {
     if (channels != 1 && channels != 2) channels = 2;
-    if (s_codec_open && s_codec_fmt.sample_rate == hz && s_codec_fmt.channel == channels) {
-        return true; // already open with a matching format — common case (most tracks share a rate)
-    }
-    if (s_codec_open) {
-        esp_codec_dev_set_out_mute(s_spk, true);
-        esp_codec_dev_close(s_spk);
-        s_codec_open = false;
-        no_light_sleep_release();
-    }
-    // Pass the MP3's actual detected rate straight through — play_pcm_stream_i16
-    // (audio_alert.c) already does this generically for arbitrary rates, so the
-    // data interface is known to reconfigure clocks per esp_codec_dev_open().
-    esp_codec_dev_sample_info_t fs = { .sample_rate = hz, .channel = channels, .bits_per_sample = 16 };
-    if (esp_codec_dev_open(s_spk, &fs) != ESP_OK) {
-        ESP_LOGW(TAG, "codec open failed (%d Hz, %d ch)", hz, channels);
-        return false;
-    }
-    s_codec_fmt  = fs;
-    s_codec_open = true;
-    // Hold no-light-sleep lock and ALDO rails for exactly as long as the codec
-    // is open — power_manager manages both centrally.
-    no_light_sleep_acquire();
-    power_manager_rail_hold(PM_RAIL_CLIENT_AUDIO);
-
     int vol = (int)settings_get_notify_volume();
-    if (vol < 0) vol = 0;
-    if (vol > 100) vol = 100;
-    esp_codec_dev_set_out_vol(s_spk, vol);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    esp_codec_dev_set_out_mute(s_spk, false);
-    return true;
+    audio_manager_set_volume(vol);
+    return audio_manager_open(AM_CLIENT_MUSIC, (uint32_t)hz, 16,
+                              (uint8_t)channels) == ESP_OK;
 }
 
 static void close_codec(void)
 {
-    if (!s_codec_open) return;
-    // Mirrors audio_alert_suspend()'s mute -> settle -> close sequence: give
-    // the mute time to actually take hold through the codec before esp_codec_
-    // dev_close() cuts the PA rail (es8311_pa_power -> BSP_POWER_AMP_IO),
-    // otherwise the power-down lands mid-signal and comes out as a squeal.
-    esp_codec_dev_set_out_mute(s_spk, true);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    esp_codec_dev_close(s_spk);
-    s_codec_open = false;
-    no_light_sleep_release();
-    power_manager_rail_release(PM_RAIL_CLIENT_AUDIO);
+    audio_manager_close(AM_CLIENT_MUSIC);
 }
 
 // The sole consumer of s_pcm_stream and the only thing that calls
@@ -380,7 +335,7 @@ static void music_feed_task(void *arg)
         // this loop must keep coming back around to notice s_flush_req.
         size_t n = xStreamBufferReceive(s_pcm_stream, s_feed_buf, MUSIC_FEED_CHUNK_BYTES, pdMS_TO_TICKS(50));
         if (n > 0) {
-            esp_codec_dev_write(s_spk, s_feed_buf, (int)n);
+            audio_manager_write(s_feed_buf, (int)n);
         }
     }
 }
@@ -554,6 +509,25 @@ static void advance_track(int direction)
     }
 }
 
+// Called by audio_manager (from audio_alert's task) when NOTIFY needs the codec.
+// Sends CMD_PAUSE and blocks until music_player_task confirms the codec is closed.
+static void pause_for_notify(void)
+{
+    if (!s_task) return;
+    player_cmd_t cmd = { .type = CMD_PAUSE };
+    xQueueSend(s_cmd_queue, &cmd, portMAX_DELAY);
+    xSemaphoreTake(s_pause_done, portMAX_DELAY);
+}
+
+// Called by audio_manager after NOTIFY releases the codec.  Async — just
+// posts CMD_RESUME and returns; playback restarts in the background.
+static void resume_after_notify(void)
+{
+    if (!s_task || !s_now.active) return;
+    player_cmd_t cmd = { .type = CMD_RESUME };
+    (void)xQueueSend(s_cmd_queue, &cmd, 0);
+}
+
 static void handle_command(const player_cmd_t *cmd)
 {
     switch (cmd->type) {
@@ -600,6 +574,21 @@ static void handle_command(const player_cmd_t *cmd)
         flush_pcm_stream();
         advance_track(-1);
         break;
+
+    case CMD_PAUSE:
+        flush_pcm_stream();
+        close_codec();
+        set_playing(false);
+        xSemaphoreGive(s_pause_done);
+        break;
+
+    case CMD_RESUME:
+        if (s_now.active) {
+            int hz = s_dec.info.hz       > 0 ? s_dec.info.hz       : 44100;
+            int ch = s_dec.info.channels > 0 ? s_dec.info.channels : 2;
+            if (open_codec(hz, ch)) set_playing(true);
+        }
+        break;
     }
 }
 
@@ -644,9 +633,6 @@ static bool ensure_engine_started(void)
         ESP_LOGW(TAG, "Cannot start playback engine — no usable catalog");
         return false;
     }
-    s_spk = audio_alert_acquire_speaker();
-    if (!s_spk) return false;
-
     s_cmd_queue = xQueueCreate(CMD_QUEUE_LEN, sizeof(player_cmd_t));
     if (!s_cmd_queue) goto fail;
 
@@ -654,6 +640,9 @@ static bool ensure_engine_started(void)
     // after it (music_feed_task needs s_pcm_stream/s_feed_buf; music_player_task
     // needs s_pcm_stream too, via decode_and_play_chunk), so build bottom-up
     // and unwind top-down on failure.
+    s_pause_done = xSemaphoreCreateBinary();
+    if (!s_pause_done) goto fail;
+
     s_pcm_stream = xStreamBufferCreateWithCaps(MUSIC_PCM_RING_BYTES, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_pcm_stream) goto fail;
 
@@ -678,14 +667,16 @@ static bool ensure_engine_started(void)
         s_task = NULL;
         goto fail;
     }
+    audio_manager_register_music_hooks(pause_for_notify, resume_after_notify);
     return true;
 
 fail:
-    if (s_feed_task) { vTaskDeleteWithCaps(s_feed_task); s_feed_task = NULL; }
-    if (s_feed_buf)  { heap_caps_free(s_feed_buf); s_feed_buf = NULL; }
+    if (s_feed_task)  { vTaskDeleteWithCaps(s_feed_task); s_feed_task = NULL; }
+    if (s_feed_buf)   { heap_caps_free(s_feed_buf); s_feed_buf = NULL; }
     if (s_flush_done) { vSemaphoreDelete(s_flush_done); s_flush_done = NULL; }
+    if (s_pause_done) { vSemaphoreDelete(s_pause_done); s_pause_done = NULL; }
     if (s_pcm_stream) { vStreamBufferDeleteWithCaps(s_pcm_stream); s_pcm_stream = NULL; }
-    if (s_cmd_queue) { vQueueDelete(s_cmd_queue); s_cmd_queue = NULL; }
+    if (s_cmd_queue)  { vQueueDelete(s_cmd_queue); s_cmd_queue = NULL; }
     s_task = NULL;
     return false;
 }

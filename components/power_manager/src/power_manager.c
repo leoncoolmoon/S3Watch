@@ -52,16 +52,16 @@ static void fire_event(pm_event_t evt)
 
 // ── ALDO rail resource management ─────────────────────────────────────────
 //
-// Conservative audio rail list: all 4 ALDOs kept alive while audio is open.
-// Once schematic analysis (pdftoppm on doc/ESP32-S3-Touch-AMOLED-2.06-schematic.pdf)
-// confirms the exact audio ALDO(s), narrow this array to gate display-only rails
-// during playback and save additional power.
+// Schematic-confirmed rail map (doc/power-rails.md):
+//   ALDO3 → A3V3   ES8311 (AVDD/DACVREF/ADCVREF) + ES7210 (VDDA/VDDM) — audio analog
+//   ALDO1 → VL1_3.3V  no board-level consumers; feeds AMOLED J3 (display-side)
+//   ALDO2 → VL2_3.3V  no board-level consumers; feeds AMOLED J3 (display-side)
+//   ALDO4 → VL3_1.8V  no board-level consumers; feeds AMOLED J3 (display-side)
 static const bsp_power_rail_t s_audio_rails[] = {
-    BSP_POWER_RAIL_ALDO1, BSP_POWER_RAIL_ALDO2,
-    BSP_POWER_RAIL_ALDO3, BSP_POWER_RAIL_ALDO4,
+    BSP_POWER_RAIL_ALDO3,  // A3V3 — sole audio analog supply
 };
 
-// All ALDO rails, used for bulk enable/disable during wake/sleep.
+// All switchable ALDOs — used only for bulk enable at init/wake.
 static const bsp_power_rail_t s_all_aldo_rails[] = {
     BSP_POWER_RAIL_ALDO1, BSP_POWER_RAIL_ALDO2,
     BSP_POWER_RAIL_ALDO3, BSP_POWER_RAIL_ALDO4,
@@ -144,13 +144,18 @@ void power_manager_request_sleep(void)
     // 1. Notify all listeners: stop non-essential work.
     fire_event(PM_EVT_PREPARE_SLEEP);
 
-    // 2. Suspend display (DCS panel sleep — ALDOs remain on so the command lands).
-    //    ALDO selective gating is deferred until schematic analysis confirms which
-    //    rails map to audio vs. display; cutting rails before that risks a cold-reset
-    //    panel that needs full reinit rather than just Sleep-Out on wake.
+    // 2. DCS panel sleep — ALDOs stay on throughout so the SPI command reaches
+    //    the panel and it enters DCS sleep state.
     if (s_display_ops.on_sleep) s_display_ops.on_sleep();
 
-    // 3. Release the "system awake" no-sleep lock.
+    // 3. Gate ALDO3 (audio) if no audio client holds it.
+    //    ALDO1/2/4 (display panel via J3) are intentionally left powered — cutting
+    //    them power-cycles the AMOLED IC and Sleep-Out alone cannot reinit it on wake.
+    if (s_rail_refcount[BSP_POWER_RAIL_ALDO3] == 0) {
+        bsp_power_rail_enable(BSP_POWER_RAIL_ALDO3, false);
+    }
+
+    // 4. Release the "system awake" no-sleep lock.
     power_manager_no_sleep_release();
 }
 
@@ -163,12 +168,18 @@ void power_manager_request_wake(pm_wake_src_t source)
     // 1. Re-acquire no-sleep lock before any I2C / display work.
     power_manager_no_sleep_hold();
 
-    // 2. Wake the display (panel Sleep-Out, I2C recover, LVGL resume, brightness).
-    //    ALDOs were never gated, so the panel is in DCS sleep state — Sleep-Out is
-    //    sufficient; no ALDO restore or hardware reset needed.
+    // 2. Restore ALDO3 (audio analog rail) if it was gated during sleep.
+    //    ALDO1/2/4 were never cut, so re-enabling them is a safe no-op.
+    //    Panel is in DCS sleep state; Sleep-Out is sufficient on wake.
+    for (size_t i = 0; i < ALL_ALDO_COUNT; i++) {
+        bsp_power_rail_enable(s_all_aldo_rails[i], true);
+    }
+    vTaskDelay(pdMS_TO_TICKS(5)); // let ALDO3 analog rail stabilize
+
+    // 3. Wake the display (Sleep-Out, I2C recover, LVGL resume, brightness).
     if (s_display_ops.on_wake) s_display_ops.on_wake();
 
-    // 3. Notify all listeners that the system is awake.
+    // 4. Notify all listeners that the system is awake.
     fire_event(PM_EVT_WOKE_UP);
 }
 

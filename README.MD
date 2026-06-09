@@ -43,7 +43,7 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
 - **Settings menu** — brightness, display timeout, sound on/off, alert volume, set time (rollers), **time zone**, Wi-Fi, NTP server, **SignalK server/port**, time format, watchface style + background, storage, **Run Tests**, restore defaults
 - **Control screen** — quick-access grid (brightness, silence, flashlight, battery, Wi-Fi, settings)
 - **Flashlight** — full-screen white at 100% brightness; swipe right to exit
-- **Audio alerts** — WAV/MP3 via ES8311 codec; synthesized fallback. Codec is closed between plays so it doesn't pin APB at 80 MHz.
+- **Audio alerts** — MP3 via ES8311 codec; synthesized bell fallback. Codec is closed between plays so it doesn't pin APB at 80 MHz. Music continues playing through display-off (CPU stays awake via PM no-sleep lock while the AMOLED DCS-sleeps).
 - **Persistent settings** — JSON on a dedicated SPIFFS partition
 - **SD-card diagnostic logging** — optional toggle (Settings → Storage → "Log to SD Card", takes effect on next boot). Mirrors all `ESP_LOG` output to numbered files under `/sdcard/logs/` (`logNNNNN.log`, never overwritten) for the lifetime of each boot session, so crashes that only happen away from a serial monitor can still be diagnosed afterwards. Fully inert — no SD access, no hook installed — when off.
 - **Settings backup & restore** — manual snapshot to/from the SD card (Settings → Storage → Backup & Restore): a single `settings.bak` file at the card root, overwritten each time you back up. Includes saved Wi-Fi networks (SSID/password) alongside display, sound, NTP, timezone, and SignalK settings — restoring after a reflash means not having to retype any of it. Restore tolerates incomplete or version-mismatched backups — fields the backup doesn't have simply keep their current in-memory values rather than being zeroed.
@@ -215,7 +215,7 @@ S3Watch/
 │   ├── settings/                               # JSON on SPIFFS, debounced writes, range-clamped load
 │   ├── wifi_manager/                           # Wi-Fi scan/connect/auto/release; event bus
 │   ├── ntp_sync/                               # SNTP; fires on connect, releases on success
-│   ├── audio_alert/                            # ES8311 init, WAV/MP3 decode, synth fallback
+│   ├── audio_alert/                            # MP3 notification via audio_manager; synth fallback
 │   ├── music_player/                           # SD-card MP3 catalog + streaming playback engine
 │   ├── sd_logger/                              # Mirrors ESP_LOG to /sdcard/logs/ when enabled
 │   ├── sensors/                                # QMI8658 power-down + test-hook accel read
@@ -326,7 +326,7 @@ Managed via the ESP-IDF Component Manager:
 | `esp32_s3_touch_amoled_2_06` | [`github.com/richcreations/esp32_s3_touch_amoled_2_06`](https://github.com/richcreations/esp32_s3_touch_amoled_2_06) | Board BSP |
 | `waveshare/qmi8658` | Component registry | IMU driver |
 | `espressif/esp_codec_dev` | Component registry | Audio codec abstraction |
-| `minimp3` | Vendored in `music_player/third_party/` | Lightweight MP3 decoder (streaming I/O — see Music app) |
+| `minimp3` | Vendored in `audio_manager/third_party/minimp3/` | Lightweight MP3 decoder (streaming I/O — Music playback + MP3 notifications) |
 
 ---
 

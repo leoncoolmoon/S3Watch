@@ -16,6 +16,7 @@
 #include "ui.h"
 #include "esp_sleep.h"
 #include "audio_alert.h"
+#include "audio_manager.h"
 #include "nvs_flash.h"
 #include "wifi_manager.h"
 #include "ntp_sync.h"
@@ -53,6 +54,7 @@ extern "C" void app_main(void) {
   //   3. Enables all ALDO rails + 50 ms settle (FT5x06 needs power before bsp_display_start)
   //   4. Initialises task_coordinator and subscribes PMU/wake-button callbacks
   power_manager_init();
+  audio_manager_init();
 
   bsp_display_start();
 
