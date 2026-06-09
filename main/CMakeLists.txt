@@ -2,7 +2,7 @@ idf_component_register(
     SRCS
         main.cpp
     INCLUDE_DIRS "."
-    REQUIRES gui sensors settings bsp_extra power_manager audio_manager esp_event audio_alert nvs_flash wifi_manager ntp_sync sd_logger sd_manager
+    REQUIRES gui sensors settings bsp_extra power_manager audio_manager esp_event audio_alert alarm_manager nvs_flash wifi_manager ntp_sync sd_logger sd_manager
 )
 
 ## enable the next line to upload the spiffs content

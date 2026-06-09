@@ -7,12 +7,18 @@
 extern "C" {
 #endif
 
-// Priority levels for codec access.  NOTIFY preempts MUSIC: if MUSIC holds the
-// codec when NOTIFY calls audio_manager_open(), music is paused (via registered
-// hook), the notification plays, and music auto-resumes when it closes.
+// Priority levels for codec access.  NOTIFY and ALARM both preempt MUSIC: if
+// MUSIC holds the codec when they call audio_manager_open(), music is paused
+// (via registered hook), the sound plays, and music auto-resumes on close.
+//
+// NOTIFY vs ALARM differ only in display-sleep behaviour (audio_manager_suspend):
+//   - NOTIFY is a short one-shot — it is closed when the display sleeps.
+//   - ALARM (and MUSIC) keep playing through display sleep; the codec holds the
+//     PM no-sleep lock so the CPU stays up until the alarm is stopped.
 typedef enum {
     AM_CLIENT_MUSIC  = 0,
     AM_CLIENT_NOTIFY = 1,
+    AM_CLIENT_ALARM  = 2,
 } am_client_t;
 
 // Registered by music_player so audio_manager can pause/resume it.

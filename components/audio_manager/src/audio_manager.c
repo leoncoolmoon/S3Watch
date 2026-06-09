@@ -46,11 +46,11 @@ esp_err_t audio_manager_open(am_client_t client,
 {
     if (!s_spk) return ESP_ERR_INVALID_STATE;
 
-    // NOTIFY preempts MUSIC: pause music first, outside the mutex, because
+    // NOTIFY/ALARM preempt MUSIC: pause music first, outside the mutex, because
     // pause_fn blocks until music_player_task closes the codec (which itself
     // calls audio_manager_close → takes the mutex). Releasing here prevents
     // a deadlock between the two callers.
-    if (client == AM_CLIENT_NOTIFY) {
+    if (client != AM_CLIENT_MUSIC) {
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         bool need_pause = s_open && s_holder == AM_CLIENT_MUSIC;
         xSemaphoreGive(s_mutex);
@@ -59,10 +59,10 @@ esp_err_t audio_manager_open(am_client_t client,
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
-    // MUSIC must not open while NOTIFY holds.
-    if (client == AM_CLIENT_MUSIC && s_open && s_holder == AM_CLIENT_NOTIFY) {
+    // MUSIC must not open while a higher-priority client (NOTIFY/ALARM) holds.
+    if (client == AM_CLIENT_MUSIC && s_open && s_holder != AM_CLIENT_MUSIC) {
         xSemaphoreGive(s_mutex);
-        ESP_LOGW(TAG, "MUSIC tried to open while NOTIFY holds — ignoring");
+        ESP_LOGW(TAG, "MUSIC tried to open while NOTIFY/ALARM holds — ignoring");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -122,11 +122,11 @@ void audio_manager_close(am_client_t client)
     s_open = false;
     power_manager_no_sleep_release();
     power_manager_rail_release(PM_RAIL_CLIENT_AUDIO);
-    bool was_notify = (client == AM_CLIENT_NOTIFY);
+    bool was_high_prio = (client != AM_CLIENT_MUSIC);
     xSemaphoreGive(s_mutex);
 
-    // After NOTIFY releases, auto-resume music (async — just posts a command).
-    if (was_notify && s_resume_fn) s_resume_fn();
+    // After NOTIFY/ALARM releases, auto-resume music (async — just posts a command).
+    if (was_high_prio && s_resume_fn) s_resume_fn();
 }
 
 int audio_manager_write(const void *data, int len)
@@ -155,9 +155,10 @@ bool audio_manager_is_open(void)
 
 void audio_manager_suspend(void)
 {
-    // MUSIC holds the no-sleep PM lock and ALDO3 rail via audio_manager_open —
-    // the CPU stays awake at DFS min freq while the AMOLED DCS-sleeps. Leave
-    // music running so it plays through display sleep.
+    // MUSIC and ALARM hold the no-sleep PM lock and ALDO3 rail via
+    // audio_manager_open — the CPU stays awake at DFS min freq while the AMOLED
+    // DCS-sleeps. Leave them running so they play through display sleep (music
+    // playback; a ringing alarm until dismissed/timed out).
     // Only close a one-shot NOTIFY stream that's mid-play. Do NOT call
     // audio_manager_close(NOTIFY) here — that triggers the music auto-resume hook.
     xSemaphoreTake(s_mutex, portMAX_DELAY);

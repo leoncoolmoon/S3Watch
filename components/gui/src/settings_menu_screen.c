@@ -3,6 +3,7 @@
 #include "ui_fonts.h"
 #include "settings.h"
 #include "setting_timeout_screen.h"
+#include "setting_alarm_timeout_screen.h"
 #include "setting_sound_screen.h"
 #include "setting_storage_screen.h"
 #include "setting_time_screen.h"
@@ -24,8 +25,10 @@ static lv_obj_t* r2;
 static lv_obj_t* r3;
 static lv_obj_t* r8;
 static lv_obj_t* r9;
+static lv_obj_t* r_alarm;
 
 static void open_timeout(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_timeout_screen_create(t); ui_dynamic_subtile_show(); } }
+static void open_alarm_timeout(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_alarm_timeout_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_sound(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_sound_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_storage(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_storage_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_time(lv_event_t* e)    { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_time_screen_create(t);    ui_dynamic_subtile_show(); } }
@@ -53,6 +56,10 @@ static void refresh_values(lv_obj_t* content)
     }
     if (r8) lv_label_set_text(r8, settings_get_time_24h() ? "24h" : "12h");
     if (r9) lv_label_set_text(r9, settings_get_watchface_style() == 0 ? "Face 1" : "Face 2");
+    if (r_alarm) {
+        char abuf[12]; snprintf(abuf, sizeof(abuf), "%d min", settings_get_alarm_timeout_min());
+        lv_label_set_text(r_alarm, abuf);
+    }
 }
 
 static void screen_events(lv_event_t* e)
@@ -143,6 +150,7 @@ void settings_menu_screen_create(lv_obj_t* parent)
     lv_obj_set_flex_align(smenu_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
 
     r2 = make_row(smenu_content, LV_SYMBOL_SETTINGS, "Display Timeout", "--", open_timeout);
+    r_alarm = make_row(smenu_content, LV_SYMBOL_BELL, "Alarm Timeout", "--", open_alarm_timeout);
     r3 = make_row(smenu_content, LV_SYMBOL_AUDIO, "Sound", "--", open_sound);
     (void)make_row(smenu_content, LV_SYMBOL_SAVE, "Storage", "Tools", open_storage);
     (void)make_row(smenu_content, LV_SYMBOL_EDIT, "Set Time", "", open_time);

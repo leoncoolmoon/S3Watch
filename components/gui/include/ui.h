@@ -27,6 +27,11 @@ extern "C" {
     void ui_dynamic_subtile_show(void);
     void ui_dynamic_subtile_close(void);
 
+    // Open the Alarm app into the row-2 app tile and navigate to it. Used by
+    // the display-wake hook so a ringing alarm comes up on the alarm screen
+    // (with Dismiss) rather than the watchface. Must run on the LVGL thread.
+    void ui_open_alarm_app(void);
+
     void ui_init(void);
     void ui_task(void* pvParameters);
 

@@ -1,19 +1,18 @@
-// Alarm Clock — launched from the app picker into the row-2 app tile (1,2).
+// Alarm Clock app screen — the UI for the alarm. All alarm logic (scheduling,
+// firing, sound, auto-silence, persistence) lives in the `alarm_manager`
+// component; this file only reads/writes alarm state through that API and
+// reflects it in widgets.
 //
-// Alarm state (hour, minute, enabled, firing) is static — survives screen
-// destroy/recreate so the alarm fires even while the user is in another app.
-// A single task_coordinator subscriber does the time-match check at 1 Hz.
-// The LVGL display pointers are zeroed on screen delete and null-checked in
-// the subscriber before touching any widget (same pattern as signalk_dashboard).
+// The alarm fires even when this screen is closed (the engine runs from boot).
+// A 500 ms lv_timer keeps the live clock plus the ON/OFF toggle and Dismiss
+// button in sync with the engine — including when the engine auto-silences a
+// ring while the screen is open. Live LVGL pointers are zeroed on screen delete
+// and null-checked before use.
 
 #include "alarm_clock.h"
+#include "alarm_manager.h"
 #include "ui_fonts.h"
 #include "settings.h"
-#include "audio_alert.h"
-#include "display_manager.h"
-#include "power_manager.h"
-#include "task_coordinator.h"
-#include "bsp/esp-bsp.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include <time.h>
@@ -21,18 +20,6 @@
 #include <string.h>
 
 static const char *TAG = "alarm_clock";
-
-// ---------------------------------------------------------------------------
-// Persistent alarm state
-// ---------------------------------------------------------------------------
-
-static int  s_alarm_hour      = 7;
-static int  s_alarm_min       = 0;
-static bool s_alarm_enabled   = false;
-static bool s_alarm_firing    = false;
-static int  s_last_fired_hour = -1;
-static int  s_last_fired_min  = -1;
-static bool s_subscribed      = false;
 
 // ---------------------------------------------------------------------------
 // Live UI pointers — only valid while screen is mounted
@@ -53,7 +40,7 @@ static lv_timer_t *s_lv_timer    = NULL;
 static void sync_toggle_appearance(void)
 {
     if (!s_btn_toggle) return;
-    if (s_alarm_enabled) {
+    if (alarm_manager_get_enabled()) {
         lv_obj_add_state(s_btn_toggle, LV_STATE_CHECKED);
         lv_label_set_text(s_lbl_toggle, "Alarm ON");
         lv_obj_set_style_bg_color(s_btn_toggle, lv_color_hex(0x27AE60), LV_STATE_CHECKED);
@@ -66,8 +53,8 @@ static void sync_toggle_appearance(void)
 static void sync_dismiss_visibility(void)
 {
     if (!s_btn_dismiss) return;
-    if (s_alarm_firing) lv_obj_clear_flag(s_btn_dismiss, LV_OBJ_FLAG_HIDDEN);
-    else                lv_obj_add_flag(s_btn_dismiss,   LV_OBJ_FLAG_HIDDEN);
+    if (alarm_manager_is_firing()) lv_obj_clear_flag(s_btn_dismiss, LV_OBJ_FLAG_HIDDEN);
+    else                           lv_obj_add_flag(s_btn_dismiss,   LV_OBJ_FLAG_HIDDEN);
 }
 
 static void update_time_label(void)
@@ -89,83 +76,24 @@ static void update_time_label(void)
 }
 
 // ---------------------------------------------------------------------------
-// Task coordinator subscriber — 1 Hz, persists across screen changes
-// ---------------------------------------------------------------------------
-
-static void alarm_tick_cb(void *user)
-{
-    (void)user;
-
-    time_t now_t = time(NULL);
-    struct tm now;
-    localtime_r(&now_t, &now);
-
-    bool same_minute = (now.tm_hour == s_last_fired_hour &&
-                        now.tm_min  == s_last_fired_min);
-
-    // Auto-dismiss once the alarm minute has passed
-    if (s_alarm_firing && !same_minute) {
-        s_alarm_firing = false;
-        audio_alert_alarm_stop();
-        ESP_LOGI(TAG, "alarm auto-dismissed (minute passed)");
-        if (bsp_display_lock(50)) {
-            sync_dismiss_visibility();
-            bsp_display_unlock();
-        }
-    }
-
-    if (!s_alarm_enabled) return;
-
-    bool time_match = (now.tm_hour == s_alarm_hour &&
-                       now.tm_min  == s_alarm_min);
-
-    if (time_match && !same_minute) {
-        s_alarm_firing    = true;
-        s_last_fired_hour = now.tm_hour;
-        s_last_fired_min  = now.tm_min;
-        ESP_LOGI(TAG, "alarm firing at %02d:%02d", s_alarm_hour, s_alarm_min);
-        power_manager_request_wake(PM_WAKE_ALARM);
-        display_manager_reset_timer();
-        audio_alert_alarm_start(settings_get_alarm_sound());
-        if (bsp_display_lock(50)) {
-            sync_dismiss_visibility();
-            bsp_display_unlock();
-        }
-    }
-
-    // Keep display awake while firing
-    if (s_alarm_firing) display_manager_reset_timer();
-
-    // Update the live clock if the screen is open (cheap, skip on contention)
-    if (bsp_display_lock(0)) {
-        update_time_label();
-        bsp_display_unlock();
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Button handlers
+// Button handlers — drive the alarm_manager; the lv_timer reflects the result.
 // ---------------------------------------------------------------------------
 
 static void toggle_cb(lv_event_t *e)
 {
     (void)e;
-    s_alarm_enabled = !s_alarm_enabled;
-    if (!s_alarm_enabled && s_alarm_firing) {
-        s_alarm_firing = false;
-        sync_dismiss_visibility();
-    }
+    bool enable = !alarm_manager_get_enabled();
+    alarm_manager_set_enabled(enable);  // turning off also silences a current ring
+    sync_dismiss_visibility();
     sync_toggle_appearance();
-    ESP_LOGI(TAG, "alarm %s", s_alarm_enabled ? "enabled" : "disabled");
+    ESP_LOGI(TAG, "alarm %s", enable ? "enabled" : "disabled");
 }
 
 static void dismiss_cb(lv_event_t *e)
 {
     (void)e;
     lv_indev_wait_release(lv_indev_active());
-    s_alarm_firing = false;
-    s_alarm_enabled = false;  // disarm after dismiss so it doesn't re-fire
-    audio_alert_alarm_stop();
+    alarm_manager_dismiss();   // stop sound + disarm (one-shot) + persist
     sync_dismiss_visibility();
     sync_toggle_appearance();
     ESP_LOGI(TAG, "alarm dismissed");
@@ -174,22 +102,29 @@ static void dismiss_cb(lv_event_t *e)
 static void roller_h_cb(lv_event_t *e)
 {
     (void)e;
-    if (s_roller_h) s_alarm_hour = (int)lv_roller_get_selected(s_roller_h);
-    ESP_LOGI(TAG, "alarm set to %02d:%02d", s_alarm_hour, s_alarm_min);
+    if (s_roller_h) alarm_manager_set_hour((int)lv_roller_get_selected(s_roller_h));
 }
 
 static void roller_m_cb(lv_event_t *e)
 {
     (void)e;
-    if (s_roller_m) s_alarm_min = (int)lv_roller_get_selected(s_roller_m);
-    ESP_LOGI(TAG, "alarm set to %02d:%02d", s_alarm_hour, s_alarm_min);
+    if (s_roller_m) alarm_manager_set_min((int)lv_roller_get_selected(s_roller_m));
 }
 
 // ---------------------------------------------------------------------------
 // Screen lifecycle
 // ---------------------------------------------------------------------------
 
-static void alarm_lv_timer_cb(lv_timer_t *t) { (void)t; update_time_label(); }
+// Runs on the LVGL thread (no lock needed). Refreshes the live clock and
+// reflects the engine's current state — so an auto-silence or external change
+// updates the toggle/dismiss button while the screen is open.
+static void alarm_lv_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    update_time_label();
+    sync_dismiss_visibility();
+    sync_toggle_appearance();
+}
 
 static void alarm_on_delete(lv_event_t *e)
 {
@@ -291,8 +226,8 @@ void alarm_clock_create(lv_obj_t *parent)
     lv_obj_set_flex_flow(roller_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(roller_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    s_roller_h = make_roller(roller_row, "H", hour_opts, (uint16_t)s_alarm_hour, roller_h_cb);
-    s_roller_m = make_roller(roller_row, "M", min_opts,  (uint16_t)s_alarm_min,  roller_m_cb);
+    s_roller_h = make_roller(roller_row, "H", hour_opts, (uint16_t)alarm_manager_get_hour(), roller_h_cb);
+    s_roller_m = make_roller(roller_row, "M", min_opts,  (uint16_t)alarm_manager_get_min(),  roller_m_cb);
 
     // ON/OFF toggle button
     s_btn_toggle = lv_obj_create(screen);
@@ -333,14 +268,7 @@ void alarm_clock_create(lv_obj_t *parent)
     sync_dismiss_visibility();
     update_time_label();
 
-    // Live clock refresh
+    // Live clock + state refresh
     if (s_lv_timer) { lv_timer_del(s_lv_timer); s_lv_timer = NULL; }
     s_lv_timer = lv_timer_create(alarm_lv_timer_cb, 500, NULL);
-
-    // Subscribe once — task_coord has no unsubscribe
-    if (!s_subscribed) {
-        task_coord_subscribe("alarm_check", alarm_tick_cb, NULL,
-                             /*on*/ 1000, /*off*/ 1000);
-        s_subscribed = true;
-    }
 }

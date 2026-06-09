@@ -34,6 +34,19 @@ uint8_t settings_get_notify_volume(void);
 // 0=Alarm, 1=Bird Song, 2=Retro Digital. Clamped to [0, ALARM_SOUND_COUNT-1].
 void    settings_set_alarm_sound(uint8_t idx);
 uint8_t settings_get_alarm_sound(void);
+
+// Alarm time + armed state. Persisted so a set alarm survives reboot; the alarm
+// engine (alarm_clock.c) loads these at boot. Hour clamped [0,23], min [0,59].
+void settings_set_alarm_hour(int hour);
+int  settings_get_alarm_hour(void);
+void settings_set_alarm_min(int min);
+int  settings_get_alarm_min(void);
+void settings_set_alarm_enabled(bool enabled);
+bool settings_get_alarm_enabled(void);
+
+// Auto-silence timeout for a ringing alarm, in minutes. Clamped [1,30], default 10.
+void settings_set_alarm_timeout_min(int minutes);
+int  settings_get_alarm_timeout_min(void);
 ```
 
 ## Time

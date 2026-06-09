@@ -28,7 +28,7 @@ Spawn a detached task that waits 400 ms then plays `/spiffs/boot.mp3` via `audio
 ```c
 void audio_alert_alarm_start(uint8_t idx);
 ```
-Start looping the alarm sound at index `idx` (0–`ALARM_SOUND_COUNT-1`). Spawns a 32 KB FreeRTOS task that calls `audio_manager_play_mp3_looped()` until `audio_alert_alarm_stop()` is called. If a loop is already running it is stopped first. No-op if `settings_get_sound()` is false. `idx` is clamped to 0 if out of range.
+Start looping the alarm sound at index `idx` (0–`ALARM_SOUND_COUNT-1`). Spawns a 32 KB FreeRTOS task that calls `audio_manager_play_mp3_looped()` on the **`AM_CLIENT_ALARM`** tier until `audio_alert_alarm_stop()` is called. The ALARM tier preempts music like a notification but is exempt from `audio_manager_suspend()`, so the alarm **keeps ringing through display sleep** (the codec holds the PM no-sleep lock, keeping the CPU up until the alarm stops). If a loop is already running it is stopped first. No-op if `settings_get_sound()` is false. `idx` is clamped to 0 if out of range.
 
 Available sounds (`alarm_sound_names[]`):
 

@@ -78,6 +78,20 @@ static void app_click_cb(lv_event_t *e)
     ui_app_tile_show();
 }
 
+// Programmatically open the Alarm app (no touch input to debounce). Mirrors
+// app_click_cb. Called on the LVGL thread by the display-wake hook when an
+// alarm is ringing.
+void ui_open_alarm_app(void)
+{
+    lv_obj_t *t = ui_app_tile_acquire();
+    if (!t) {
+        ESP_LOGE(TAG, "failed to acquire app tile for alarm");
+        return;
+    }
+    alarm_clock_create(t);
+    ui_app_tile_show();
+}
+
 // ---------------------------------------------------------------------------
 // Screen construction
 // ---------------------------------------------------------------------------

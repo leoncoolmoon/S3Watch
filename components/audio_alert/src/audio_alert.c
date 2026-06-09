@@ -30,8 +30,11 @@ static void alarm_loop_task(void *pv)
 {
     const char *path = (const char *)pv;
     audio_manager_set_volume((int)settings_get_notify_volume());
-    audio_manager_play_mp3_looped(path, AM_CLIENT_NOTIFY, &s_alarm_stop);
-    vTaskDelete(NULL);
+    // ALARM tier: preempts music like NOTIFY but keeps playing through display
+    // sleep (audio_manager_suspend exempts it), so the alarm rings until the
+    // user dismisses it or the auto-silence timeout stops the loop.
+    audio_manager_play_mp3_looped(path, AM_CLIENT_ALARM, &s_alarm_stop);
+    vTaskDeleteWithCaps(NULL);
 }
 
 void audio_alert_alarm_start(uint8_t idx)
@@ -40,8 +43,15 @@ void audio_alert_alarm_start(uint8_t idx)
     if (idx >= ALARM_SOUND_COUNT) idx = 0;
     audio_alert_alarm_stop();   // cancel any previous alarm still fading out
     s_alarm_stop = false;
-    xTaskCreate(alarm_loop_task, "alarm_loop", 32 * 1024,
-                (void *)alarm_paths[idx], 4, NULL);
+    // SPIRAM stack (like audio_manager's am_mp3_task): a 32 KB *internal* stack
+    // often can't be allocated after LVGL/WiFi have fragmented internal RAM, and
+    // the failure is silent — which is why the alarm rang with no sound. The
+    // decoder is heap-allocated, so a SPIRAM stack is safe here.
+    if (xTaskCreateWithCaps(alarm_loop_task, "alarm_loop", 32 * 1024,
+                            (void *)alarm_paths[idx], 4, NULL,
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+        ESP_LOGE(TAG, "alarm_loop task create failed — no alarm sound");
+    }
 }
 
 void audio_alert_alarm_stop(void)

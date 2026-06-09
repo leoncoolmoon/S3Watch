@@ -25,7 +25,7 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
   - **SignalK** — the marine dashboard (below)
   - **World Clock** — scrollable list of cities with live local times and day-offset badges (handles DST correctly via POSIX TZ strings)
   - **Stopwatch** — start/stop/lap/reset with centisecond precision (`esp_timer_get_time()`), persists state across app open/close, up to 50 laps
-  - **Alarm Clock** — single daily alarm with hour/minute rollers, on/off toggle, dismiss button; fires even while the display is asleep (wakes the display, plays the alert sound, repeats every 30 s until dismissed)
+  - **Alarm Clock** — single one-shot alarm with hour/minute rollers, on/off toggle, dismiss button. Time + armed state persist across reboot. Fires even while the display is asleep: wakes the watch onto the alarm app and loops the selected alarm sound, which **keeps playing through display sleep** until you Dismiss it or the auto-silence timeout (Settings → Alarm Timeout, default 10 min) stops it. One-shot — disarms after it fires.
   - **Calendar** — read-only monthly reference view (LVGL `lv_calendar`) with today highlighted and built-in header arrows to page to the previous/next month; no events or notifications
   - **Music** — Artist → Album → Track browser + Now Playing screen, streaming MP3s straight off the SD card (catalog driven by an `INDEX.JSN` built by the [music-sync](doc/music-sync/) tool); playback runs in its own background task so it keeps going while you navigate elsewhere. Now Playing has image-based transport controls (Shuffle / Prev / Play-Pause / Next); in-app `<` back button navigates browse levels without closing the app
   - **Calculator** — four-function calculator with iOS-style layout (function row / digit grid / double-wide zero). Left-to-right evaluation; chained `=` repeats the last operator with the remembered right operand; `C` clears current input, second `C` clears all state
@@ -41,7 +41,7 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
 - **SignalK settings** — server address via four-roller IP picker (or hostname fallback via QWERTY keyboard), port via numeric keypad.
 
 ### Other UI
-- **Settings menu** — brightness, display timeout, sound on/off, alert volume, set time (rollers), **time zone**, Wi-Fi, NTP server, **SignalK server/port**, time format, watchface style + background, storage, **Run Tests**, restore defaults
+- **Settings menu** — brightness, display timeout, **alarm timeout**, sound on/off, alert volume, set time (rollers), **time zone**, Wi-Fi, NTP server, **SignalK server/port**, time format, watchface style + background, storage, **Run Tests**, restore defaults
 - **Control screen** — quick-access grid (brightness, silence, flashlight, battery, Wi-Fi, settings)
 - **Flashlight** — full-screen white at 100% brightness; swipe right to exit
 - **Audio alerts** — MP3 via ES8311 codec; synthesized bell fallback. Codec is closed between plays so it doesn't pin APB at 80 MHz. Music continues playing through display-off (CPU stays awake via PM no-sleep lock while the AMOLED DCS-sleeps).
@@ -105,7 +105,7 @@ Base cadence: **100 ms when the display is on, 1 s when off**. Current subscribe
 | `ui_battery_refresh` (gui) | 30 s | — | refresh watchface battery indicator |
 | `signalk_dash` (gui) | 1 s | — | pull cached SignalK values into the dashboard labels |
 | `signalk_alerts` (gui) | 1 s | — | repaint the alerts list from the active-alert cache |
-| `alarm_check` (gui) | 1 s | 1 s | alarm time-match check; wakes the display + plays the alert sound when due |
+| `alarm_check` (gui) | 1 s | 1 s | alarm time-match check (registered at boot, runs display-on and -off); on a match wakes the watch onto the alarm app and starts the looping alarm sound; also enforces the auto-silence timeout |
 
 The task_coordinator stack is sized for LVGL render under the wake hook (8 KB) so subscribers that mutate widgets can do so directly (under the LVGL lock).
 
@@ -181,14 +181,14 @@ S3Watch/
 │   │   │   ├── ui_screens.c                    # theme + active-screen tracking
 │   │   │   ├── ui_tileview.c                   # tileview grid + dynamic sub-tiles
 │   │   │   ├── ui_back_button.c                # GPIO 0 ISR + PMU short-press → back
-│   │   │   ├── ui_power_events.c               # BSP power events + pre-show wake hook
+│   │   │   ├── ui_power_events.c               # BSP power events + pre-show wake hook + alarm fire→app hook
 │   │   │   ├── watchface.c                     # Registry + dispatcher
 │   │   │   ├── faces/face_1.c                  # Stacked HH/MM + centered SS
 │   │   │   ├── faces/face_2.c                  # Horizontal HH:MM + AM/PM + date
 │   │   │   ├── app_picker.c                    # App launcher grid (swipe up, tile 0,2)
 │   │   │   ├── world_clock.c                   # World Clock app
 │   │   │   ├── stopwatch.c                     # Stopwatch app
-│   │   │   ├── alarm_clock.c                   # Alarm Clock app
+│   │   │   ├── alarm_clock.c                   # Alarm Clock app screen (UI only — logic in alarm_manager)
 │   │   │   ├── calendar_app.c                  # Calendar app (lv_calendar wrapper)
 │   │   │   ├── calculator_app.c                # Calculator app — four-function, iOS layout
 │   │   │   ├── music_app.c                     # Music app — Artist/Album/Track browser + Now Playing UI
@@ -219,6 +219,7 @@ S3Watch/
 │   ├── wifi_manager/                           # Wi-Fi scan/connect/auto/release; event bus
 │   ├── ntp_sync/                               # SNTP; fires on connect, releases on success
 │   ├── audio_alert/                            # MP3 notification via audio_manager; synth fallback
+│   ├── alarm_manager/                          # Alarm engine — scheduling/firing/auto-silence (UI in gui)
 │   ├── music_player/                           # SD-card MP3 catalog + streaming playback engine
 │   ├── sd_manager/                             # Reference-counted SD card mount (shared by sd_logger, music_player, settings)
 │   ├── sd_logger/                              # Mirrors ESP_LOG to /sdcard/logs/ when enabled

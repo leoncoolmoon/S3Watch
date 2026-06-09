@@ -6,7 +6,7 @@ Plays notification, alarm, and startup sounds from SPIFFS. Pure audio-content co
 
 - **Notification chime** — plays `/spiffs/notification.mp3`; falls back to a synthesized multi-partial bell tone if the file is absent.
 - **Boot sound** — plays `/spiffs/boot.mp3` 400 ms after startup; falls back to the notification chime if absent.
-- **Alarm looping** — plays one of three alarm MP3s from `/spiffs/alarms/` in a continuous loop until explicitly stopped; driven by `audio_alert_alarm_start()` / `audio_alert_alarm_stop()`.
+- **Alarm looping** — plays one of three alarm MP3s from `/spiffs/alarms/` in a continuous loop until explicitly stopped; driven by `audio_alert_alarm_start()` / `audio_alert_alarm_stop()`. Uses the `AM_CLIENT_ALARM` codec tier, so the loop **keeps ringing through display sleep** (until Dismiss or the auto-silence timeout).
 - Exposes `audio_alert_suspend()` as a safety valve (delegates to `audio_manager_suspend()`).
 
 ## What it does NOT own

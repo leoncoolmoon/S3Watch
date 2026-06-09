@@ -17,6 +17,7 @@
 #include "esp_sleep.h"
 #include "audio_alert.h"
 #include "audio_manager.h"
+#include "alarm_manager.h"
 #include "nvs_flash.h"
 #include "wifi_manager.h"
 #include "ntp_sync.h"
@@ -60,6 +61,12 @@ extern "C" void app_main(void) {
   bsp_display_start();
 
   settings_init();
+
+  // Alarm engine: loads its state from settings (just initialised) and registers
+  // the alarm_check subscriber. Must be before task_coord_start() — which runs
+  // later inside ui_task → display_manager_init().
+  alarm_manager_init();
+
   sd_manager_init();
 
   // Reads settings_get_sd_logging_enabled() — must come after settings_init().

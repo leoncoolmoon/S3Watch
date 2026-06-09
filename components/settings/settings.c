@@ -32,6 +32,10 @@ static const char *TAG = "SETTINGS";
 #define DEFAULT_SIGNALK_PORT     3000
 #define DEFAULT_SD_LOGGING_ENABLED false
 #define DEFAULT_ALARM_SOUND        0
+#define DEFAULT_ALARM_HOUR         7
+#define DEFAULT_ALARM_MIN          0
+#define DEFAULT_ALARM_ENABLED      false
+#define DEFAULT_ALARM_TIMEOUT_MIN  10
 
 static uint8_t brightness = DEFAULT_BRIGHTNESS;
 static uint32_t display_timeout_ms = DEFAULT_DISPLAY_TIMEOUT;
@@ -45,6 +49,10 @@ static bool time_24h = DEFAULT_TIME_24H;
 static bool wifi_enabled = DEFAULT_WIFI_ENABLED;
 static bool sd_logging_enabled = DEFAULT_SD_LOGGING_ENABLED;
 static uint8_t alarm_sound = DEFAULT_ALARM_SOUND;
+static int alarm_hour = DEFAULT_ALARM_HOUR;
+static int alarm_min = DEFAULT_ALARM_MIN;
+static bool alarm_enabled = DEFAULT_ALARM_ENABLED;
+static int alarm_timeout_min = DEFAULT_ALARM_TIMEOUT_MIN;
 static int watchface_style = DEFAULT_WATCHFACE_STYLE;
 static int watchface_bg = DEFAULT_WATCHFACE_BG;
 static bool spiffs_ready = false;
@@ -162,6 +170,10 @@ static cJSON *settings_to_json(void)
     cJSON_AddNumberToObject(root, "signalk_port", (double)signalk_port);
     cJSON_AddBoolToObject(root, "sd_logging_enabled", sd_logging_enabled);
     cJSON_AddNumberToObject(root, "alarm_sound", (double)alarm_sound);
+    cJSON_AddNumberToObject(root, "alarm_hour", (double)alarm_hour);
+    cJSON_AddNumberToObject(root, "alarm_min", (double)alarm_min);
+    cJSON_AddBoolToObject(root, "alarm_enabled", alarm_enabled);
+    cJSON_AddNumberToObject(root, "alarm_timeout_min", (double)alarm_timeout_min);
     return root;
 }
 
@@ -232,6 +244,14 @@ static bool settings_from_json(cJSON *root)
     if (cJSON_IsBool(j)) sd_logging_enabled = cJSON_IsTrue(j);
     j = cJSON_GetObjectItem(root, "alarm_sound");
     if (cJSON_IsNumber(j)) { double v = j->valuedouble; alarm_sound = (v < 0) ? 0 : (v > 2) ? 2 : (uint8_t)v; }
+    j = cJSON_GetObjectItem(root, "alarm_hour");
+    if (cJSON_IsNumber(j)) { double v = j->valuedouble; alarm_hour = (v < 0) ? 0 : (v > 23) ? 23 : (int)v; }
+    j = cJSON_GetObjectItem(root, "alarm_min");
+    if (cJSON_IsNumber(j)) { double v = j->valuedouble; alarm_min = (v < 0) ? 0 : (v > 59) ? 59 : (int)v; }
+    j = cJSON_GetObjectItem(root, "alarm_enabled");
+    if (cJSON_IsBool(j)) alarm_enabled = cJSON_IsTrue(j);
+    j = cJSON_GetObjectItem(root, "alarm_timeout_min");
+    if (cJSON_IsNumber(j)) { double v = j->valuedouble; alarm_timeout_min = (v < 1) ? 1 : (v > 30) ? 30 : (int)v; }
     cJSON_Delete(root);
     // Apply to hardware where relevant
     bsp_display_brightness_set(brightness);
@@ -484,6 +504,51 @@ uint8_t settings_get_alarm_sound(void)
     return alarm_sound;
 }
 
+void settings_set_alarm_hour(int hour)
+{
+    alarm_hour = (hour < 0) ? 0 : (hour > 23) ? 23 : hour;
+    schedule_save();
+}
+
+int settings_get_alarm_hour(void)
+{
+    return alarm_hour;
+}
+
+void settings_set_alarm_min(int min)
+{
+    alarm_min = (min < 0) ? 0 : (min > 59) ? 59 : min;
+    schedule_save();
+}
+
+int settings_get_alarm_min(void)
+{
+    return alarm_min;
+}
+
+void settings_set_alarm_enabled(bool enabled)
+{
+    if (alarm_enabled == enabled) return;
+    alarm_enabled = enabled;
+    schedule_save();
+}
+
+bool settings_get_alarm_enabled(void)
+{
+    return alarm_enabled;
+}
+
+void settings_set_alarm_timeout_min(int minutes)
+{
+    alarm_timeout_min = (minutes < 1) ? 1 : (minutes > 30) ? 30 : minutes;
+    schedule_save();
+}
+
+int settings_get_alarm_timeout_min(void)
+{
+    return alarm_timeout_min;
+}
+
 bool settings_save(void) {
     return settings_write_json();
 }
@@ -564,6 +629,10 @@ static void apply_defaults(void)
     signalk_port = DEFAULT_SIGNALK_PORT;
     sd_logging_enabled = DEFAULT_SD_LOGGING_ENABLED;
     alarm_sound = DEFAULT_ALARM_SOUND;
+    alarm_hour = DEFAULT_ALARM_HOUR;
+    alarm_min = DEFAULT_ALARM_MIN;
+    alarm_enabled = DEFAULT_ALARM_ENABLED;
+    alarm_timeout_min = DEFAULT_ALARM_TIMEOUT_MIN;
 }
 
 bool settings_reset_defaults(void)

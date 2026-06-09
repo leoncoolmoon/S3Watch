@@ -4,8 +4,9 @@
 
 ```c
 typedef enum {
-    AM_CLIENT_MUSIC  = 0,  // low priority — preempted by NOTIFY
-    AM_CLIENT_NOTIFY = 1,  // high priority — pauses MUSIC, auto-resumes after
+    AM_CLIENT_MUSIC  = 0,  // low priority — preempted by NOTIFY/ALARM
+    AM_CLIENT_NOTIFY = 1,  // high priority — pauses MUSIC, auto-resumes after; closed on display sleep
+    AM_CLIENT_ALARM  = 2,  // high priority — pauses MUSIC like NOTIFY, but keeps playing through display sleep
 } am_client_t;
 
 typedef void (*am_pause_fn_t)(void);   // must block until codec is closed
@@ -27,7 +28,7 @@ Initialize hardware, create mutex, register PM sleep listener. Call once after `
 esp_err_t audio_manager_open(am_client_t client,
                               uint32_t sample_rate, uint8_t bits, uint8_t channels);
 ```
-Open the codec for the given format. Acquires the PM no-sleep lock and ALDO3 rail hold. Applies the last-set volume and unmutes. No-op if same client and format are already open. `AM_CLIENT_NOTIFY` will pause `AM_CLIENT_MUSIC` first if music is playing.
+Open the codec for the given format. Acquires the PM no-sleep lock and ALDO3 rail hold. Applies the last-set volume and unmutes. No-op if same client and format are already open. `AM_CLIENT_NOTIFY` and `AM_CLIENT_ALARM` will pause `AM_CLIENT_MUSIC` first if music is playing.
 
 ---
 
@@ -35,7 +36,7 @@ Open the codec for the given format. Acquires the PM no-sleep lock and ALDO3 rai
 ```c
 void audio_manager_close(am_client_t client);
 ```
-Mute → 10 ms settle → close → release PM lock and ALDO rail. For `AM_CLIENT_NOTIFY`, additionally calls the registered `resume_fn` so music restarts automatically.
+Mute → 10 ms settle → close → release PM lock and ALDO rail. For `AM_CLIENT_NOTIFY` and `AM_CLIENT_ALARM` (any non-MUSIC client), additionally calls the registered `resume_fn` so music restarts automatically.
 
 ---
 
@@ -75,7 +76,7 @@ Returns true if the codec is currently open by any client.
 ```c
 void audio_manager_suspend(void);
 ```
-Close any active `AM_CLIENT_NOTIFY` stream cleanly (mute → 10 ms → close → release PM lock and ALDO rail). **No-op for `AM_CLIENT_MUSIC`** — music holds its own PM no-sleep lock and ALDO3 rail, so the CPU stays awake and audio supply stays powered while the AMOLED panel DCS-sleeps; no intervention is needed. Called automatically by the PM listener on `PM_EVT_PREPARE_SLEEP`; can also be called directly.
+Close any active `AM_CLIENT_NOTIFY` stream cleanly (mute → 10 ms → close → release PM lock and ALDO rail). **No-op for `AM_CLIENT_MUSIC` and `AM_CLIENT_ALARM`** — both hold their own PM no-sleep lock and ALDO3 rail, so the CPU stays awake and audio supply stays powered while the AMOLED panel DCS-sleeps. This is what lets music play through display sleep and a ringing alarm keep sounding after the screen times out (until dismissed or the auto-silence timeout). Called automatically by the PM listener on `PM_EVT_PREPARE_SLEEP`; can also be called directly.
 
 ---
 

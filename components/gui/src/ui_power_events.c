@@ -8,8 +8,10 @@
 //      also triggers the NTP daily re-sync check.
 
 #include "ui_power_events.h"
+#include "ui.h"
 #include "watchface.h"
 #include "ui_tileview.h"
+#include "alarm_manager.h"
 #include "display_manager.h"
 #include "bsp/esp32_s3_touch_amoled_2_06.h"
 #include "bsp/esp-bsp.h"
@@ -70,13 +72,25 @@ static void ui_battery_refresh_cb(void* user) {
 // time + battery state into the active watchface so the first visible frame
 // is already correct.
 static void pre_show_cb(void) {
-  // Every wake comes up on the watchface, regardless of which tile the user
-  // was viewing before the screen slept. Must happen before the refresh
-  // calls below so the labels we update belong to the now-active tile.
-  ui_tileview_reset_to_watchface();
+  // Normally every wake comes up on the watchface, regardless of which tile the
+  // user was viewing before the screen slept. Exception: if an alarm is ringing,
+  // bring the watch up on the Alarm app so Dismiss is one tap away. Must happen
+  // before the refresh calls below so the labels we update belong to the
+  // now-active tile.
+  if (alarm_manager_is_firing()) {
+    ui_open_alarm_app();
+  } else {
+    ui_tileview_reset_to_watchface();
+  }
   watchface_refresh_now();
   ui_power_refresh_sync();
 }
+
+// alarm_manager fire callback: invoked (on the task_coordinator task) when the
+// alarm fires while the display is already on. Hop onto the LVGL thread to open
+// the alarm app. The display-off case is covered by pre_show_cb above.
+static void open_alarm_async(void *unused) { (void)unused; ui_open_alarm_app(); }
+static void on_alarm_fire(void) { lv_async_call(open_alarm_async, NULL); }
 
 void ui_power_events_start(void) {
   esp_event_handler_register(BSP_POWER_EVENT_BASE, ESP_EVENT_ANY_ID,
@@ -84,6 +98,7 @@ void ui_power_events_start(void) {
   task_coord_subscribe("ui_battery_refresh", ui_battery_refresh_cb, NULL,
                        /*on*/ 30000, /*off*/ 0);
   display_manager_set_pre_show_cb(pre_show_cb);
+  alarm_manager_set_fire_cb(on_alarm_fire);
   // Trigger once immediately so the watchface doesn't show 0% on boot.
   ui_battery_refresh_cb(NULL);
 }
