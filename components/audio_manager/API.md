@@ -89,6 +89,20 @@ Returns `ESP_OK` on success, `ESP_FAIL` if the file is not found or cannot be de
 
 ---
 
+### `audio_manager_play_mp3_looped`
+```c
+esp_err_t audio_manager_play_mp3_looped(const char *path,
+                                         am_client_t client,
+                                         volatile bool *stop);
+```
+Play an MP3 file in a continuous loop until `*stop` becomes `true`. Blocks the caller. Checks `*stop` between decoded MPEG frames (~26 ms latency at 44.1 kHz). At EOF the file/decoder is closed and reopened to loop from the beginning (expect a brief ~50–100 ms gap between loops). `mp3dec_ex_t` (~11.5 KB) is allocated in SPIRAM.
+
+**Always call from a dedicated FreeRTOS task** with at least 32 KB stack — this function is blocking and long-lived. Set `*stop = true` from another task to stop playback; the function returns after the current frame finishes.
+
+Returns `ESP_OK` when stopped cleanly, `ESP_FAIL` if the file cannot be opened.
+
+---
+
 ### `audio_manager_register_music_hooks`
 ```c
 void audio_manager_register_music_hooks(am_pause_fn_t pause_fn,

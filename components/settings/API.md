@@ -29,6 +29,11 @@ bool    settings_get_sound(void);
 
 void    settings_set_notify_volume(uint8_t vol_percent);  // 0–100
 uint8_t settings_get_notify_volume(void);
+
+// Alarm sound index — see audio_alert.h: ALARM_SOUND_COUNT and alarm_sound_names[].
+// 0=Alarm, 1=Bird Song, 2=Retro Digital. Clamped to [0, ALARM_SOUND_COUNT-1].
+void    settings_set_alarm_sound(uint8_t idx);
+uint8_t settings_get_alarm_sound(void);
 ```
 
 ## Time

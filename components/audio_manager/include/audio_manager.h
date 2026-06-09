@@ -54,6 +54,13 @@ void audio_manager_suspend(void);
 // success, ESP_FAIL if the file is not found or cannot be decoded.
 esp_err_t audio_manager_play_mp3(const char *path, am_client_t client);
 
+// Play an MP3 file in a continuous loop, blocking until *stop is set true.
+// Checks *stop between decoded frames (~26 ms at 44.1 kHz) so stop latency
+// is low.  File is reopened at each loop boundary.  Caller must run this
+// from a dedicated task (e.g. audio_alert's alarm loop task).
+esp_err_t audio_manager_play_mp3_looped(const char *path, am_client_t client,
+                                         volatile bool *stop);
+
 // Register pause/resume hooks.  Call from music_player after its engine
 // starts.  Both may be NULL (no auto-pause behaviour until registered).
 void audio_manager_register_music_hooks(am_pause_fn_t pause_fn,

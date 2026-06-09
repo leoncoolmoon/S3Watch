@@ -31,6 +31,7 @@ static const char *TAG = "SETTINGS";
 #define DEFAULT_SIGNALK_HOST     ""
 #define DEFAULT_SIGNALK_PORT     3000
 #define DEFAULT_SD_LOGGING_ENABLED false
+#define DEFAULT_ALARM_SOUND        0
 
 static uint8_t brightness = DEFAULT_BRIGHTNESS;
 static uint32_t display_timeout_ms = DEFAULT_DISPLAY_TIMEOUT;
@@ -43,6 +44,7 @@ static uint16_t signalk_port = DEFAULT_SIGNALK_PORT;
 static bool time_24h = DEFAULT_TIME_24H;
 static bool wifi_enabled = DEFAULT_WIFI_ENABLED;
 static bool sd_logging_enabled = DEFAULT_SD_LOGGING_ENABLED;
+static uint8_t alarm_sound = DEFAULT_ALARM_SOUND;
 static int watchface_style = DEFAULT_WATCHFACE_STYLE;
 static int watchface_bg = DEFAULT_WATCHFACE_BG;
 static bool spiffs_ready = false;
@@ -159,6 +161,7 @@ static cJSON *settings_to_json(void)
     cJSON_AddStringToObject(root, "signalk_host", signalk_host);
     cJSON_AddNumberToObject(root, "signalk_port", (double)signalk_port);
     cJSON_AddBoolToObject(root, "sd_logging_enabled", sd_logging_enabled);
+    cJSON_AddNumberToObject(root, "alarm_sound", (double)alarm_sound);
     return root;
 }
 
@@ -227,6 +230,8 @@ static bool settings_from_json(cJSON *root)
     }
     j = cJSON_GetObjectItem(root, "sd_logging_enabled");
     if (cJSON_IsBool(j)) sd_logging_enabled = cJSON_IsTrue(j);
+    j = cJSON_GetObjectItem(root, "alarm_sound");
+    if (cJSON_IsNumber(j)) { double v = j->valuedouble; alarm_sound = (v < 0) ? 0 : (v > 2) ? 2 : (uint8_t)v; }
     cJSON_Delete(root);
     // Apply to hardware where relevant
     bsp_display_brightness_set(brightness);
@@ -467,6 +472,18 @@ uint8_t settings_get_notify_volume(void)
     return notify_volume;
 }
 
+void settings_set_alarm_sound(uint8_t idx)
+{
+    if (idx > 2) idx = 2;
+    alarm_sound = idx;
+    schedule_save();
+}
+
+uint8_t settings_get_alarm_sound(void)
+{
+    return alarm_sound;
+}
+
 bool settings_save(void) {
     return settings_write_json();
 }
@@ -546,6 +563,7 @@ static void apply_defaults(void)
     signalk_host[sizeof(signalk_host) - 1] = '\0';
     signalk_port = DEFAULT_SIGNALK_PORT;
     sd_logging_enabled = DEFAULT_SD_LOGGING_ENABLED;
+    alarm_sound = DEFAULT_ALARM_SOUND;
 }
 
 bool settings_reset_defaults(void)

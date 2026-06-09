@@ -5,12 +5,14 @@
 #include "audio_alert.h"
 #include "settings_menu_screen.h"
 #include "esp_log.h"
+#include <string.h>
 
 static lv_obj_t* ssound_screen;
 static lv_obj_t* s_switch;
 static lv_obj_t* s_slider;
 static lv_obj_t* s_value_lbl;
 static lv_obj_t* s_test_btn;
+static lv_obj_t* s_alarm_dd;
 static void on_delete(lv_event_t* e);
 static const char* TAG = "SoundSettings";
 
@@ -55,6 +57,13 @@ static void test_btn_cb(lv_event_t* e)
 {
     (void)e;
     audio_alert_notify();
+}
+
+static void alarm_dd_cb(lv_event_t* e)
+{
+    (void)e;
+    uint8_t idx = (uint8_t)lv_dropdown_get_selected(s_alarm_dd);
+    settings_set_alarm_sound(idx);
 }
 
 void setting_sound_screen_create(lv_obj_t* parent)
@@ -130,13 +139,41 @@ void setting_sound_screen_create(lv_obj_t* parent)
     lv_obj_center(test_lbl);
     lv_obj_add_event_cb(s_test_btn, test_btn_cb, LV_EVENT_CLICKED, NULL);
     if (!settings_get_sound()) lv_obj_add_state(s_test_btn, LV_STATE_DISABLED);
+
+    // Alarm sound selection
+    lv_obj_t* alarm_row = lv_obj_create(content);
+    lv_obj_remove_style_all(alarm_row);
+    lv_obj_set_size(alarm_row, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_all(alarm_row, 4, 0);
+    lv_obj_set_flex_flow(alarm_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(alarm_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t* alarm_lbl = lv_label_create(alarm_row);
+    lv_obj_set_style_text_font(alarm_lbl, &font_normal_28, 0);
+    lv_obj_set_style_text_color(alarm_lbl, lv_color_white(), 0);
+    lv_label_set_text(alarm_lbl, "Alarm Sound");
+
+    // Build dropdown options string from alarm_sound_names[]
+    char opts[64] = "";
+    for (int i = 0; i < ALARM_SOUND_COUNT; i++) {
+        if (i > 0) strncat(opts, "\n", sizeof(opts) - strlen(opts) - 1);
+        strncat(opts, alarm_sound_names[i], sizeof(opts) - strlen(opts) - 1);
+    }
+    s_alarm_dd = lv_dropdown_create(alarm_row);
+    lv_dropdown_set_options(s_alarm_dd, opts);
+    lv_dropdown_set_selected(s_alarm_dd, settings_get_alarm_sound());
+    lv_obj_set_style_text_font(s_alarm_dd, &font_normal_28, 0);
+    lv_obj_set_style_text_color(s_alarm_dd, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(s_alarm_dd, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_opa(s_alarm_dd, LV_OPA_COVER, 0);
+    lv_obj_add_event_cb(s_alarm_dd, alarm_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 static void on_delete(lv_event_t* e)
 {
     (void)e;
     ESP_LOGI(TAG, "Sound settings screen deleted");
-    ssound_screen = NULL;
+    ssound_screen = s_alarm_dd = NULL;
 }
 
 lv_obj_t* setting_sound_screen_get(void)

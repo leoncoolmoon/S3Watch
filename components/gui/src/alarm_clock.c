@@ -106,6 +106,7 @@ static void alarm_tick_cb(void *user)
     // Auto-dismiss once the alarm minute has passed
     if (s_alarm_firing && !same_minute) {
         s_alarm_firing = false;
+        audio_alert_alarm_stop();
         ESP_LOGI(TAG, "alarm auto-dismissed (minute passed)");
         if (bsp_display_lock(50)) {
             sync_dismiss_visibility();
@@ -125,18 +126,15 @@ static void alarm_tick_cb(void *user)
         ESP_LOGI(TAG, "alarm firing at %02d:%02d", s_alarm_hour, s_alarm_min);
         power_manager_request_wake(PM_WAKE_ALARM);
         display_manager_reset_timer();
-        audio_alert_notify();
+        audio_alert_alarm_start(settings_get_alarm_sound());
         if (bsp_display_lock(50)) {
             sync_dismiss_visibility();
             bsp_display_unlock();
         }
     }
 
-    // Repeat sound every 30 seconds while firing, and keep display awake
-    if (s_alarm_firing && now.tm_sec % 30 == 0 && now.tm_sec != 0) {
-        display_manager_reset_timer();
-        audio_alert_notify();
-    }
+    // Keep display awake while firing
+    if (s_alarm_firing) display_manager_reset_timer();
 
     // Update the live clock if the screen is open (cheap, skip on contention)
     if (bsp_display_lock(0)) {
@@ -167,6 +165,7 @@ static void dismiss_cb(lv_event_t *e)
     lv_indev_wait_release(lv_indev_active());
     s_alarm_firing = false;
     s_alarm_enabled = false;  // disarm after dismiss so it doesn't re-fire
+    audio_alert_alarm_stop();
     sync_dismiss_visibility();
     sync_toggle_appearance();
     ESP_LOGI(TAG, "alarm dismissed");

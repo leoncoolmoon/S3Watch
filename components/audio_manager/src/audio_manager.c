@@ -253,6 +253,54 @@ esp_err_t audio_manager_play_mp3(const char *path, am_client_t client)
     return args.result;
 }
 
+esp_err_t audio_manager_play_mp3_looped(const char *path, am_client_t client,
+                                         volatile bool *stop)
+{
+    mp3dec_ex_t *dec = heap_caps_malloc(sizeof(mp3dec_ex_t), MALLOC_CAP_SPIRAM);
+    if (!dec) return ESP_ERR_NO_MEM;
+
+    bool dec_open = false;
+    FILE *f = NULL;
+    bool codec_open = false;
+    esp_err_t result = ESP_FAIL;
+
+    f = fopen(path, "rb");
+    if (!f) goto cleanup;
+    mp3dec_io_t io = { am_mp3_read, f, am_mp3_seek, f };
+    if (mp3dec_ex_open_cb(dec, &io, MP3D_DO_NOT_SCAN) != 0) goto cleanup;
+    dec_open = true;
+
+    int hz = dec->info.hz       > 0 ? dec->info.hz       : 44100;
+    int ch = dec->info.channels > 0 ? dec->info.channels : 1;
+    audio_manager_set_volume(s_volume);
+    if (audio_manager_open(client, (uint32_t)hz, 16, (uint8_t)ch) != ESP_OK) goto cleanup;
+    codec_open = true;
+
+    int16_t pcm_buf[MINIMP3_MAX_SAMPLES_PER_FRAME];
+    size_t n;
+    result = ESP_OK;
+    while (!*stop) {
+        n = mp3dec_ex_read(dec, pcm_buf, MINIMP3_MAX_SAMPLES_PER_FRAME);
+        if (n > 0) { audio_manager_write(pcm_buf, (int)(n * sizeof(int16_t))); continue; }
+        // EOF — close and reopen to loop
+        mp3dec_ex_close(dec); dec_open = false;
+        fclose(f); f = NULL;
+        if (*stop) break;
+        f = fopen(path, "rb");
+        if (!f) break;
+        io = (mp3dec_io_t){ am_mp3_read, f, am_mp3_seek, f };
+        if (mp3dec_ex_open_cb(dec, &io, MP3D_DO_NOT_SCAN) != 0) { fclose(f); f = NULL; break; }
+        dec_open = true;
+    }
+
+cleanup:
+    if (codec_open) audio_manager_close(client);
+    if (dec_open)   mp3dec_ex_close(dec);
+    if (f)          fclose(f);
+    free(dec);
+    return result;
+}
+
 // ── music pause/resume hooks ───────────────────────────────────────────────
 
 void audio_manager_register_music_hooks(am_pause_fn_t pause_fn,

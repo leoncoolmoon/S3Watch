@@ -7,7 +7,47 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-static const char* TAG = "AUDIO_ALERT";
+static const char *TAG = "AUDIO_ALERT";
+
+// ---------------------------------------------------------------------------
+// Alarm sound table
+// ---------------------------------------------------------------------------
+
+static const char * const alarm_paths[ALARM_SOUND_COUNT] = {
+    "/spiffs/alarms/alarm.mp3",
+    "/spiffs/alarms/bird_song.mp3",
+    "/spiffs/alarms/retro_digital.mp3",
+};
+const char * const alarm_sound_names[ALARM_SOUND_COUNT] = {
+    "Alarm",
+    "Bird Song",
+    "Retro Digital",
+};
+
+static volatile bool s_alarm_stop = false;
+
+static void alarm_loop_task(void *pv)
+{
+    const char *path = (const char *)pv;
+    audio_manager_set_volume((int)settings_get_notify_volume());
+    audio_manager_play_mp3_looped(path, AM_CLIENT_NOTIFY, &s_alarm_stop);
+    vTaskDelete(NULL);
+}
+
+void audio_alert_alarm_start(uint8_t idx)
+{
+    if (!settings_get_sound()) return;
+    if (idx >= ALARM_SOUND_COUNT) idx = 0;
+    audio_alert_alarm_stop();   // cancel any previous alarm still fading out
+    s_alarm_stop = false;
+    xTaskCreate(alarm_loop_task, "alarm_loop", 32 * 1024,
+                (void *)alarm_paths[idx], 4, NULL);
+}
+
+void audio_alert_alarm_stop(void)
+{
+    s_alarm_stop = true;
+}
 
 esp_err_t audio_alert_init(void)
 {
@@ -104,7 +144,11 @@ static void audio_startup_tone_task(void *pv)
 {
     (void)pv;
     vTaskDelay(pdMS_TO_TICKS(400));
-    audio_alert_notify();
+    audio_manager_set_volume((int)settings_get_notify_volume());
+    if (audio_manager_play_mp3("/spiffs/boot.mp3", AM_CLIENT_NOTIFY) != ESP_OK) {
+        ESP_LOGI(TAG, "boot.mp3 not found, using synthesized tone");
+        audio_alert_notify();
+    }
     vTaskDelete(NULL);
 }
 

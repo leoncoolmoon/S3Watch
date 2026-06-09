@@ -22,6 +22,10 @@ bool settings_get_sound(void);
 void settings_set_notify_volume(uint8_t vol_percent);
 uint8_t settings_get_notify_volume(void);
 
+// Alarm sound selection: index into alarm_sound_names[] (0=Alarm, 1=Bird Song, 2=Retro Digital).
+void    settings_set_alarm_sound(uint8_t idx);
+uint8_t settings_get_alarm_sound(void);
+
 // Persist settings to SPIFFS JSON and load from it
 bool settings_save(void);
 bool settings_load(void);

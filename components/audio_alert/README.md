@@ -1,12 +1,12 @@
 # audio_alert
 
-Plays notification sounds — either an MP3 file from SPIFFS or a synthesized bell tone as fallback. Pure audio-content component; all hardware is owned by `audio_manager`.
+Plays notification, alarm, and startup sounds from SPIFFS. Pure audio-content component; all hardware is owned by `audio_manager`.
 
 ## Responsibilities
 
-- Loads and plays `/spiffs/notification.mp3` via `audio_manager_play_mp3()`.
-- Falls back to a synthesized multi-partial bell tone if the MP3 is absent or unreadable.
-- Schedules a startup tone shortly after boot (delayed 400 ms for PA settle).
+- **Notification chime** — plays `/spiffs/notification.mp3`; falls back to a synthesized multi-partial bell tone if the file is absent.
+- **Boot sound** — plays `/spiffs/boot.mp3` 400 ms after startup; falls back to the notification chime if absent.
+- **Alarm looping** — plays one of three alarm MP3s from `/spiffs/alarms/` in a continuous loop until explicitly stopped; driven by `audio_alert_alarm_start()` / `audio_alert_alarm_stop()`.
 - Exposes `audio_alert_suspend()` as a safety valve (delegates to `audio_manager_suspend()`).
 
 ## What it does NOT own
