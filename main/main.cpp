@@ -22,6 +22,7 @@
 #include "ntp_sync.h"
 #include "signalk_client.h"
 #include "sd_logger.h"
+#include "sd_manager.h"
 
 static const char *TAG = "MAIN";
 
@@ -59,6 +60,7 @@ extern "C" void app_main(void) {
   bsp_display_start();
 
   settings_init();
+  sd_manager_init();
 
   // Reads settings_get_sd_logging_enabled() — must come after settings_init().
   // Mirrors all ESP_LOG output to /sdcard/logs/ for this boot session when enabled.

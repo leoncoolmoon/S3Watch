@@ -33,7 +33,7 @@ static lv_obj_t *make_header(lv_obj_t *parent, const char *title,
     lv_label_set_text(back, LV_SYMBOL_LEFT);
     lv_obj_set_style_text_font(back, &font_normal_32, 0);
     lv_obj_set_style_text_color(back, lv_color_hex(0x4090FF), 0);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 10, 0);
+    lv_obj_align(back, LV_ALIGN_LEFT_MID, 50, 0);
     lv_obj_add_flag(back, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, user_data);
 
@@ -311,7 +311,7 @@ void wifi_scan_screen_open(lv_obj_t *parent)
     lv_label_set_text(rescan, LV_SYMBOL_REFRESH);
     lv_obj_set_style_text_font(rescan, &font_normal_32, 0);
     lv_obj_set_style_text_color(rescan, lv_color_hex(0x4090FF), 0);
-    lv_obj_align(rescan, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_align(rescan, LV_ALIGN_RIGHT_MID, -50, 0);
     lv_obj_add_flag(rescan, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(rescan, rescan_cb, LV_EVENT_CLICKED, ctx);
 

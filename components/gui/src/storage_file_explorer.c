@@ -27,12 +27,10 @@ static void create_explorer_2(lv_obj_t* parent)
 {
     lv_obj_t* list = lv_list_create(parent);
     lv_obj_set_size(list, lv_pct(100), lv_pct(100));
-    lv_obj_t * btn;
 
     DIR* dir = opendir("/spiffs");
     if (!dir) {
-        //(void)lv_list_add_text(list, "Cannot open /spiffs");
-        btn = lv_list_add_button(list, LV_SYMBOL_WARNING, "Cannot open /spiffs");
+        lv_list_add_button(list, LV_SYMBOL_WARNING, "Cannot open /spiffs");
         return;
     }
     struct dirent* de; struct stat st;
@@ -41,8 +39,7 @@ static void create_explorer_2(lv_obj_t* parent)
         char path[256]; snprintf(path, sizeof(path), "/spiffs/%s", de->d_name);
         long sz = 0; if (stat(path, &st) == 0) sz = (long)st.st_size;
         char line[128]; snprintf(line, sizeof(line), "%s  (%ld)", de->d_name, sz);
-        //lv_list_add_text(list, line);
-        btn = lv_list_add_button(list, LV_SYMBOL_FILE, line);
+        lv_list_add_button(list, LV_SYMBOL_FILE, line);
     }
     closedir(dir);
 }

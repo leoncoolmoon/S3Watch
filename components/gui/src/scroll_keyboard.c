@@ -127,12 +127,6 @@ static void done_cb(lv_event_t *e)
     lv_async_call((lv_async_cb_t)(void(*)(void*))free, ctx);
 }
 
-static void cancel_cb(lv_event_t *e)
-{
-    kb_ctx_t *ctx = (kb_ctx_t*)lv_event_get_user_data(e);
-    if (ctx->on_cancel) ctx->on_cancel(ctx->user_data);
-    lv_async_call((lv_async_cb_t)(void(*)(void*))free, ctx);
-}
 
 static void mode_cb(lv_event_t *e)
 {

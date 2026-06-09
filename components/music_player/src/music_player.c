@@ -17,6 +17,7 @@
 #include "music_catalog.h"
 
 #include "bsp/esp32_s3_touch_amoled_2_06.h"
+#include "sd_manager.h"
 #include "audio_manager.h"
 #include "settings.h"
 
@@ -42,20 +43,16 @@ static const char *TAG = "MUSIC_PLAYER";
 
 // ── catalog: lazy load + read-only accessor passthroughs ────────────────
 
-static bool s_sd_mounted = false;
+static bool s_sd_acquired = false;
 
-// Mounts the card if nothing else has (mirrors settings.c's sd_acquire guard
-// against double-mounting sd_logger's session-long mount), then leaves it
-// mounted for the rest of the boot session — same persistent-mount approach
-// as sd_logger, since playback needs the card available indefinitely anyway.
 static bool ensure_sd_mounted(void)
 {
-    if (s_sd_mounted) return true;
-    if (bsp_sdcard == NULL && bsp_sdcard_mount() != ESP_OK) {
+    if (s_sd_acquired) return true;
+    if (sd_manager_acquire() != ESP_OK) {
         ESP_LOGW(TAG, "SD card mount failed");
         return false;
     }
-    s_sd_mounted = true;
+    s_sd_acquired = true;
     return true;
 }
 

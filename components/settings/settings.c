@@ -1,6 +1,7 @@
 #include "settings.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "sd_manager.h"
 #include "bsp/display.h"
 #include "bsp/esp32_s3_touch_amoled_2_06.h"
 #include "bsp_board_extra.h"
@@ -299,36 +300,18 @@ static bool settings_read_json(void)
 // (FF_USE_LFN == 0): "settings" (8 chars) + "bak" (3 chars).
 #define SD_BACKUP_FILE BSP_SD_MOUNT_POINT "/settings.bak"
 
-// sd_logger may already have the card mounted (and keeps it mounted for the
-// whole boot session) and bsp_sdcard_mount() has no double-mount guard, so we
-// detect existing-mount state via the BSP's exposed handle and only mount/
-// unmount what we ourselves are responsible for.
-static bool sd_acquire(bool *we_mounted)
-{
-    *we_mounted = (bsp_sdcard == NULL);
-    if (*we_mounted && bsp_sdcard_mount() != ESP_OK) return false;
-    return true;
-}
-
-static void sd_release(bool we_mounted)
-{
-    if (we_mounted) bsp_sdcard_unmount();
-}
-
 bool settings_sd_backup_exists(void)
 {
-    bool we_mounted;
-    if (!sd_acquire(&we_mounted)) return false;
+    if (sd_manager_acquire() != ESP_OK) return false;
     struct stat st;
     bool exists = (stat(SD_BACKUP_FILE, &st) == 0 && st.st_size > 0);
-    sd_release(we_mounted);
+    sd_manager_release();
     return exists;
 }
 
 bool settings_backup_to_sd(void)
 {
-    bool we_mounted;
-    if (!sd_acquire(&we_mounted)) return false;
+    if (sd_manager_acquire() != ESP_OK) return false;
 
     cJSON *root = settings_to_json();
     if (root) {
@@ -342,7 +325,7 @@ bool settings_backup_to_sd(void)
     char *json_str = root ? cJSON_PrintUnformatted(root) : NULL;
     if (root) cJSON_Delete(root);
     if (!json_str) {
-        sd_release(we_mounted);
+        sd_manager_release();
         return false;
     }
 
@@ -361,15 +344,14 @@ bool settings_backup_to_sd(void)
         }
     }
     cJSON_free(json_str);
-    sd_release(we_mounted);
+    sd_manager_release();
     if (ok) ESP_LOGI(TAG, "Settings backed up to %s", SD_BACKUP_FILE);
     return ok;
 }
 
 bool settings_restore_from_sd(void)
 {
-    bool we_mounted;
-    if (!sd_acquire(&we_mounted)) return false;
+    if (sd_manager_acquire() != ESP_OK) return false;
 
     struct stat st;
     cJSON *root = NULL;
@@ -386,7 +368,7 @@ bool settings_restore_from_sd(void)
             fclose(f);
         }
     }
-    sd_release(we_mounted);
+    sd_manager_release();
 
     if (!root) {
         ESP_LOGW(TAG, "No usable settings backup at %s", SD_BACKUP_FILE);

@@ -23,6 +23,12 @@
 #include <stdio.h>
 #include <string.h>
 
+LV_IMAGE_DECLARE(image_ctrl_play);
+LV_IMAGE_DECLARE(image_ctrl_pause);
+LV_IMAGE_DECLARE(image_ctrl_prev);
+LV_IMAGE_DECLARE(image_ctrl_next);
+LV_IMAGE_DECLARE(image_ctrl_shuffle);
+
 static const char *TAG = "MUSIC_APP";
 
 typedef enum {
@@ -139,6 +145,15 @@ static lv_obj_t *make_row(lv_obj_t *parent, const char *text, lv_event_cb_t cb, 
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(row, cb, LV_EVENT_CLICKED, (void *)(uintptr_t)index);
 
+    // Truncate long metadata tags so they fit on one line inside the 56 px row.
+    // Now Playing uses its own wider labels and is unaffected.
+    enum { MAX_ROW_CHARS = 24 };
+    char short_buf[MAX_ROW_CHARS + 4];
+    if (strlen(text) > MAX_ROW_CHARS) {
+        snprintf(short_buf, sizeof(short_buf), "%.*s...", MAX_ROW_CHARS, text);
+        text = short_buf;
+    }
+
     lv_obj_t *lbl = lv_label_create(row);
     lv_label_set_text(lbl, text);
     lv_obj_set_style_text_font(lbl, &font_normal_28, 0);
@@ -239,7 +254,7 @@ static void refresh_now_playing(void)
     format_mmss(np.duration_s, buf, sizeof(buf));
     lv_label_set_text(s_np_dur, buf);
 
-    lv_label_set_text(s_np_play, np.playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+    lv_image_set_src(s_np_play, np.playing ? &image_ctrl_pause : &image_ctrl_play);
 }
 
 static void np_timer_cb(lv_timer_t *t) { (void)t; refresh_now_playing(); }
@@ -256,7 +271,8 @@ static void np_shuffle_cb(lv_event_t *e)
 
 // Round icon button — used for prev/play-pause/next (plain click) and shuffle
 // (checkable toggle, wired separately by the caller).
-static lv_obj_t *make_round_btn(lv_obj_t *parent, const char *symbol, lv_event_cb_t cb, lv_event_code_t code)
+static lv_obj_t *make_round_btn(lv_obj_t *parent, const lv_image_dsc_t *img,
+                                  lv_event_cb_t cb, lv_event_code_t code)
 {
     lv_obj_t *btn = lv_obj_create(parent);
     lv_obj_remove_style_all(btn);
@@ -268,12 +284,10 @@ static lv_obj_t *make_round_btn(lv_obj_t *parent, const char *symbol, lv_event_c
     lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
     if (cb) lv_obj_add_event_cb(btn, cb, code, NULL);
 
-    lv_obj_t *lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, symbol);
-    lv_obj_set_style_text_font(lbl, &font_normal_32, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_center(lbl);
-    lv_obj_remove_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *icon = lv_image_create(btn);
+    lv_image_set_src(icon, img);
+    lv_obj_center(icon);
+    lv_obj_remove_flag(icon, LV_OBJ_FLAG_CLICKABLE);
     return btn;
 }
 
@@ -358,18 +372,18 @@ static void build_now_playing(void)
     // Shuffle is a checkable toggle (LV_EVENT_VALUE_CHANGED), exactly like
     // the Silence/Wi-Fi toggle tiles in settings_screen.c's control grid —
     // its checked-state background color is the on/off indicator.
-    lv_obj_t *shuf_btn = make_round_btn(btn_row, LV_SYMBOL_SHUFFLE, np_shuffle_cb, LV_EVENT_VALUE_CHANGED);
+    lv_obj_t *shuf_btn = make_round_btn(btn_row, &image_ctrl_shuffle, np_shuffle_cb, LV_EVENT_VALUE_CHANGED);
     lv_obj_add_flag(shuf_btn, LV_OBJ_FLAG_CHECKABLE);
     lv_obj_set_style_bg_color(shuf_btn, lv_color_hex(0x4090FF), LV_PART_MAIN | LV_STATE_CHECKED);
     lv_obj_set_style_bg_opa(shuf_btn, 220, LV_PART_MAIN | LV_STATE_CHECKED);
     if (music_player_get_shuffle()) lv_obj_add_state(shuf_btn, LV_STATE_CHECKED);
 
-    make_round_btn(btn_row, LV_SYMBOL_PREV, np_prev_cb, LV_EVENT_CLICKED);
+    make_round_btn(btn_row, &image_ctrl_prev, np_prev_cb, LV_EVENT_CLICKED);
 
-    lv_obj_t *play_btn = make_round_btn(btn_row, LV_SYMBOL_PLAY, np_play_pause_cb, LV_EVENT_CLICKED);
+    lv_obj_t *play_btn = make_round_btn(btn_row, &image_ctrl_play, np_play_pause_cb, LV_EVENT_CLICKED);
     s_np_play = lv_obj_get_child(play_btn, 0);
 
-    make_round_btn(btn_row, LV_SYMBOL_NEXT, np_next_cb, LV_EVENT_CLICKED);
+    make_round_btn(btn_row, &image_ctrl_next, np_next_cb, LV_EVENT_CLICKED);
 
     refresh_now_playing();
     if (s_np_timer) lv_timer_del(s_np_timer);
@@ -527,7 +541,7 @@ void music_app_create(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(s_back_btn, 30, 0);
     lv_obj_set_style_radius(s_back_btn, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_pad_all(s_back_btn, 6, 0);
-    lv_obj_align(s_back_btn, LV_ALIGN_LEFT_MID, 10, 0);
+    lv_obj_align(s_back_btn, LV_ALIGN_LEFT_MID, 50, 0);
     lv_obj_add_flag(s_back_btn, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(s_back_btn, 16);
     lv_obj_add_event_cb(s_back_btn, back_cb, LV_EVENT_CLICKED, NULL);

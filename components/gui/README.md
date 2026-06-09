@@ -22,7 +22,7 @@ The UI is a 2D tileview. At boot, the watchface tile is active. Swipe gestures n
 |-------------|---------|
 | `watchface` | Main watch face (digital/analog, configurable) |
 | `alarm_clock` | Alarm set/manage |
-| `music_app` | Music player UI (catalog browse, now-playing) |
+| `music_app` | Music player UI (catalog browse, now-playing, image-based transport controls) |
 | `signalk_dashboard` | Live marine instrument gauges |
 | `signalk_alerts` | Active SignalK alarm list |
 | `stopwatch` | Stopwatch |
@@ -35,6 +35,14 @@ The UI is a 2D tileview. At boot, the watchface tile is active. Swipe gestures n
 ## Initialization
 
 `ui_task()` runs as a dedicated FreeRTOS task. It calls `bsp_display_start()`, creates all tile structure, calls `display_manager_init()`, then enters the LVGL port event loop.
+
+## Music app navigation
+
+`music_app` manages a 4-level browse hierarchy (Artist → Album → Track → Now Playing) inside a single app tile. Key design notes:
+
+- **In-app back button** — a `<` button in the header pops one browse level. Inset 50 px from the left edge to clear the AMOLED's rounded bezel corners. Hidden at the Artist root level. The hardware back gesture closes the whole app from any depth (playback continues regardless).
+- **Browse row truncation** — row labels are pre-truncated to 24 characters before display to prevent long metadata tags from wrapping inside the fixed 56 px row height.
+- **Transport controls** — Now Playing shows four 64×64 round buttons (Shuffle / Prev / Play-Pause / Next). Icons are compiled LVGL image descriptors (`LV_COLOR_FORMAT_RGB565A8`, 32×32 px) in `icons/image_ctrl_shuffle.c`, `image_ctrl_prev.c`, `image_ctrl_play.c`, `image_ctrl_pause.c`, `image_ctrl_next.c`. The play/pause button swaps its image source on each 500 ms refresh tick.
 
 ## Dependencies
 

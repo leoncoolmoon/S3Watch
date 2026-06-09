@@ -16,6 +16,7 @@
 
 #include "sd_logger.h"
 #include "settings.h"
+#include "sd_manager.h"
 #include "bsp/esp32_s3_touch_amoled_2_06.h"
 
 #include "esp_err.h"
@@ -159,15 +160,14 @@ void sd_logger_init(void)
         return;
     }
 
-    esp_err_t err = bsp_sdcard_mount();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "SD card mount failed (%s) — file logging disabled", esp_err_to_name(err));
+    if (sd_manager_acquire() != ESP_OK) {
+        ESP_LOGW(TAG, "SD card mount failed — file logging disabled");
         return;
     }
 
     if (mkdir(SD_LOG_DIR, 0775) != 0 && errno != EEXIST) {
         ESP_LOGW(TAG, "Could not create %s (errno %d) — file logging disabled", SD_LOG_DIR, errno);
-        bsp_sdcard_unmount();
+        sd_manager_release();
         return;
     }
 
@@ -177,7 +177,7 @@ void sd_logger_init(void)
     s_log_file = fopen(path, "w");
     if (!s_log_file) {
         ESP_LOGW(TAG, "Could not open %s for writing — file logging disabled", path);
-        bsp_sdcard_unmount();
+        sd_manager_release();
         return;
     }
 
@@ -186,7 +186,7 @@ void sd_logger_init(void)
         ESP_LOGW(TAG, "Could not allocate log stream buffer — file logging disabled");
         fclose(s_log_file);
         s_log_file = NULL;
-        bsp_sdcard_unmount();
+        sd_manager_release();
         return;
     }
 
@@ -196,7 +196,7 @@ void sd_logger_init(void)
         s_stream = NULL;
         fclose(s_log_file);
         s_log_file = NULL;
-        bsp_sdcard_unmount();
+        sd_manager_release();
         return;
     }
 

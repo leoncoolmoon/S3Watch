@@ -120,10 +120,10 @@ void setting_timeout_screen_create(lv_obj_t* parent)
     lv_obj_set_flex_align(stimeout_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
     lv_obj_set_scroll_dir(stimeout_content, LV_DIR_VER);
 
-    lv_obj_t* r10 = make_opt(stimeout_content, "10 s", SETTINGS_DISPLAY_TIMEOUT_10S);
-    lv_obj_t* r20 = make_opt(stimeout_content, "20 s", SETTINGS_DISPLAY_TIMEOUT_20S);
-    lv_obj_t* r30 = make_opt(stimeout_content, "30 s", SETTINGS_DISPLAY_TIMEOUT_30S);
-    lv_obj_t* r60 = make_opt(stimeout_content, "1 min", SETTINGS_DISPLAY_TIMEOUT_1MIN);
+    make_opt(stimeout_content, "10 s",  SETTINGS_DISPLAY_TIMEOUT_10S);
+    make_opt(stimeout_content, "20 s",  SETTINGS_DISPLAY_TIMEOUT_20S);
+    make_opt(stimeout_content, "30 s",  SETTINGS_DISPLAY_TIMEOUT_30S);
+    make_opt(stimeout_content, "1 min", SETTINGS_DISPLAY_TIMEOUT_1MIN);
 
     // Style for selected option for clear visibility
     for (uint32_t i = 0; i < lv_obj_get_child_count(stimeout_content); ++i) {

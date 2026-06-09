@@ -1,7 +1,9 @@
 // Verify utc_tm_to_epoch against well-known reference values and against
 // the host's timegm (the standard libc routine the firmware can't use).
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #define _DARWIN_C_SOURCE
 #include <stdlib.h>
 #include <time.h>

@@ -25,7 +25,6 @@ static lv_timer_t* batt_timer;
 static void batt_screen_events(lv_event_t* e);
 static void batt_update_cb(lv_timer_t* t);
 static void batt_update_values(void);
-static lv_obj_t* make_chip(lv_obj_t* parent, const char* txt);
 static lv_obj_t* make_row(lv_obj_t* parent, const char* label_txt, lv_obj_t** out_val);
 static void on_delete(lv_event_t* e);
 
@@ -220,20 +219,6 @@ static void batt_update_values(void)
     lv_label_set_text(row_temp_val, buf);
 }
 
-static lv_obj_t* make_chip(lv_obj_t* parent, const char* txt)
-{
-    lv_obj_t* chip = lv_label_create(parent);
-    lv_label_set_text(chip, txt);
-    lv_obj_set_style_text_font(chip, &font_normal_26, 0);
-    lv_obj_set_style_bg_opa(chip, LV_OPA_20, 0);
-    lv_obj_set_style_bg_color(chip, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_radius(chip, 10, 0);
-    lv_obj_set_style_pad_hor(chip, 12, 0);
-    lv_obj_set_style_pad_ver(chip, 6, 0);
-    lv_obj_set_style_margin_right(chip, 8, 0);
-    lv_obj_set_style_margin_bottom(chip, 8, 0);
-    return chip;
-}
 
 static lv_obj_t* make_row(lv_obj_t* parent, const char* label_txt, lv_obj_t** out_val)
 {

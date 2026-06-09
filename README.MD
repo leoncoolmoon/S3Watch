@@ -27,7 +27,7 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
   - **Stopwatch** — start/stop/lap/reset with centisecond precision (`esp_timer_get_time()`), persists state across app open/close, up to 50 laps
   - **Alarm Clock** — single daily alarm with hour/minute rollers, on/off toggle, dismiss button; fires even while the display is asleep (wakes the display, plays the alert sound, repeats every 30 s until dismissed)
   - **Calendar** — read-only monthly reference view (LVGL `lv_calendar`) with today highlighted and built-in header arrows to page to the previous/next month; no events or notifications
-  - **Music** — Artist → Album → Track browser + Now Playing screen, streaming MP3s straight off the SD card (catalog driven by an `INDEX.JSN` built by the [music-sync](doc/music-sync/) tool); playback runs in its own background task so it keeps going while you navigate elsewhere
+  - **Music** — Artist → Album → Track browser + Now Playing screen, streaming MP3s straight off the SD card (catalog driven by an `INDEX.JSN` built by the [music-sync](doc/music-sync/) tool); playback runs in its own background task so it keeps going while you navigate elsewhere. Now Playing has image-based transport controls (Shuffle / Prev / Play-Pause / Next); in-app `<` back button navigates browse levels without closing the app
 
 ### SignalK marine extension
 - **SignalK dashboard app** — launched from the app picker. 2×2 grid of live values in **American nautical units**:

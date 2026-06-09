@@ -45,30 +45,6 @@ static void play_pcm_16_mono_22k(const int16_t* pcm, size_t samples)
     audio_manager_close(AM_CLIENT_NOTIFY);
 }
 
-static bool play_pcm_stream_i16(const int16_t* pcm, size_t samples,
-                                 int sample_rate, int channels)
-{
-    if (channels != 1 && channels != 2) channels = 1;
-    int vol = (int)settings_get_notify_volume();
-    audio_manager_set_volume(vol);
-    if (audio_manager_open(AM_CLIENT_NOTIFY, (uint32_t)sample_rate, 16,
-                           (uint8_t)channels) != ESP_OK) {
-        return false;
-    }
-
-    const size_t chunk_samp = (size_t)(256 * channels);
-    size_t written = 0;
-    while (written < samples) {
-        size_t n = samples - written;
-        if (n > chunk_samp) n = chunk_samp;
-        if (audio_manager_write((void*)(pcm + written),
-                                (int)(n * sizeof(int16_t))) < 0) break;
-        written += n;
-    }
-
-    audio_manager_close(AM_CLIENT_NOTIFY);
-    return true;
-}
 
 void audio_alert_notify(void)
 {
