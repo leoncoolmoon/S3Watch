@@ -28,6 +28,7 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
   - **Alarm Clock** — single daily alarm with hour/minute rollers, on/off toggle, dismiss button; fires even while the display is asleep (wakes the display, plays the alert sound, repeats every 30 s until dismissed)
   - **Calendar** — read-only monthly reference view (LVGL `lv_calendar`) with today highlighted and built-in header arrows to page to the previous/next month; no events or notifications
   - **Music** — Artist → Album → Track browser + Now Playing screen, streaming MP3s straight off the SD card (catalog driven by an `INDEX.JSN` built by the [music-sync](doc/music-sync/) tool); playback runs in its own background task so it keeps going while you navigate elsewhere. Now Playing has image-based transport controls (Shuffle / Prev / Play-Pause / Next); in-app `<` back button navigates browse levels without closing the app
+  - **Calculator** — four-function calculator with iOS-style layout (function row / digit grid / double-wide zero). Left-to-right evaluation; chained `=` repeats the last operator with the remembered right operand; `C` clears current input, second `C` clears all state
 
 ### SignalK marine extension
 - **SignalK dashboard app** — launched from the app picker. 2×2 grid of live values in **American nautical units**:
@@ -72,7 +73,8 @@ The UI is a 2D tileview anchored on the watchface. All transitions are gesture-d
                        │     App Picker (0,2)       │ ───────────────────────▶ │   Dynamic App Tile (1,2)   │
                        │ SignalK · World Clock ·    │ ◀─────────────────────── │ SignalK / World Clock /    │
                        │ Stopwatch · Alarm ·        │   swipe left / Back      │ Stopwatch / Alarm Clock /  │
-                       │ Calendar · Music           │                          │ Calendar / Music           │
+                       │ Calendar · Music ·         │                          │ Calendar / Music /         │
+                       │ Calculator                 │                          │ Calculator                 │
                        └────────────────────────────┘                          └────────────────────────────┘
 ```
 
@@ -188,6 +190,7 @@ S3Watch/
 │   │   │   ├── stopwatch.c                     # Stopwatch app
 │   │   │   ├── alarm_clock.c                   # Alarm Clock app
 │   │   │   ├── calendar_app.c                  # Calendar app (lv_calendar wrapper)
+│   │   │   ├── calculator_app.c                # Calculator app — four-function, iOS layout
 │   │   │   ├── music_app.c                     # Music app — Artist/Album/Track browser + Now Playing UI
 │   │   │   ├── signalk_dashboard.c             # SignalK app (launched from app picker)
 │   │   │   ├── signalk_dashboard_fmt.c         # Pure formatters (testable)
@@ -217,6 +220,7 @@ S3Watch/
 │   ├── ntp_sync/                               # SNTP; fires on connect, releases on success
 │   ├── audio_alert/                            # MP3 notification via audio_manager; synth fallback
 │   ├── music_player/                           # SD-card MP3 catalog + streaming playback engine
+│   ├── sd_manager/                             # Reference-counted SD card mount (shared by sd_logger, music_player, settings)
 │   ├── sd_logger/                              # Mirrors ESP_LOG to /sdcard/logs/ when enabled
 │   ├── sensors/                                # QMI8658 power-down + test-hook accel read
 │   ├── signalk_client/                         # WebSocket client; value + alert caches
@@ -327,6 +331,16 @@ Managed via the ESP-IDF Component Manager:
 | `waveshare/qmi8658` | Component registry | IMU driver |
 | `espressif/esp_codec_dev` | Component registry | Audio codec abstraction |
 | `minimp3` | Vendored in `audio_manager/third_party/minimp3/` | Lightweight MP3 decoder (streaming I/O — Music playback + MP3 notifications) |
+
+---
+
+## Developer guides
+
+| Guide | What it covers |
+|-------|----------------|
+| [`doc/writing-an-app.md`](doc/writing-an-app.md) | How to write a new app: file layout, lifecycle pattern, icon conversion, UI patterns, checklist |
+| [`doc/power-rails.md`](doc/power-rails.md) | AXP2101 PMU rail mapping and sleep gating |
+| [`doc/music-sync/README.md`](doc/music-sync/README.md) | SD card layout, indexer script, music sync workflow |
 
 ---
 

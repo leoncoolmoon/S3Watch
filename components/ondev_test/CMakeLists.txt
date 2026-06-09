@@ -33,6 +33,7 @@ idf_component_register(
         "src/hw_test_brightness.c"
         "src/hw_test_wifi_scan.c"
         "src/hw_test_coord_stats.c"
+        "src/hw_test_sd.c"
 
         # Reused host test bodies, compiled here for the firmware build
         "${SHARED_TESTS_DIR}/test_utc_tm.c"
@@ -55,6 +56,7 @@ idf_component_register(
         settings
         sensors
         gui
+        sd_manager
 
     PRIV_REQUIRES
         nvs_flash

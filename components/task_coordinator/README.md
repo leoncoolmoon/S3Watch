@@ -14,7 +14,7 @@ The coordinator wakes at the configured base period (`on_period_ms` or `off_peri
 - **off period**: cadence when false (typically display is off, system sleeping).
 - Either period may be 0 to skip all calls while in that state.
 
-Callbacks run sequentially on the coordinator task. They must be fast and non-blocking. Do not call LVGL directly — use `lv_async_call()` instead.
+Callbacks run sequentially on the coordinator task. They must be fast and non-blocking. The coordinator acquires the LVGL mutex before invoking each callback, so **subscribers can safely call LVGL APIs directly** — no `bsp_display_lock` needed inside a callback. Do not call `bsp_display_lock` from within a subscriber; it is already held and will deadlock.
 
 ## Initialization order
 
@@ -37,7 +37,7 @@ The task is not created until `task_coord_start()` to avoid running a partial su
 
 ## Limits
 
-Subscriber slots are a fixed compile-time constant (see source). Subscriptions are permanent — there is no unsubscribe.
+Subscriber slots: **16** (compile-time constant). Currently ~11 are used. Subscriptions are permanent — there is no unsubscribe. Exceeding the limit logs an error and drops the subscriber silently, so check headroom before adding new subscribers.
 
 ## Dependencies
 

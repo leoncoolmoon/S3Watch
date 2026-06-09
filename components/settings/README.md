@@ -22,6 +22,31 @@ settings_init();   // after bsp_display_start(), before UI / subsystem inits
 
 `settings_init()` loads from SPIFFS and applies the TZ immediately. If no settings file exists, all defaults are applied and saved.
 
+## Adding a new setting
+
+1. **Static + default** in `settings.c`:
+   ```c
+   #define DEFAULT_FOO 42
+   static int s_foo = DEFAULT_FOO;
+   ```
+2. **Getter / setter** in `settings.c` and declared in `settings.h`. The setter must call `schedule_save()` to trigger the debounced 10-second write:
+   ```c
+   void settings_set_foo(int val) { s_foo = clamp(val, 0, 100); schedule_save(); }
+   int  settings_get_foo(void)    { return s_foo; }
+   ```
+3. **Write path** — add to `settings_to_json()`:
+   ```c
+   cJSON_AddNumberToObject(root, "foo", s_foo);
+   ```
+4. **Read path** — add to `settings_from_json()`, always clamping before narrowing to avoid silent wrapping on corrupt data:
+   ```c
+   j = cJSON_GetObjectItem(root, "foo");
+   if (cJSON_IsNumber(j)) { double v = j->valuedouble; s_foo = (v < 0) ? 0 : (v > 100) ? 100 : (int)v; }
+   ```
+   Missing keys are silently skipped, so old backups stay safe.
+
+The JSON key string is the field's persisted identity — never rename it after shipping.
+
 ## Dependencies
 
 `settings` has no component-level dependencies beyond ESP-IDF base. It forward-declares `cJSON` in the header to avoid forcing `json` onto every consumer's include path.

@@ -44,6 +44,7 @@ extern bool hw_test_audio       (char *detail, size_t n);
 extern bool hw_test_brightness  (char *detail, size_t n);
 extern bool hw_test_wifi_scan   (char *detail, size_t n);
 extern bool hw_test_coord_stats (char *detail, size_t n);
+extern bool hw_test_sd          (char *detail, size_t n);
 
 // ── Registry ─────────────────────────────────────────────────────────────
 
@@ -69,6 +70,7 @@ static const test_t s_tests[] = {
     { ONDEV_TEST_HW, "Display brightness",  hw_test_brightness },
     { ONDEV_TEST_HW, "WiFi scan",           hw_test_wifi_scan },
     { ONDEV_TEST_HW, "task_coord stats",    hw_test_coord_stats },
+    { ONDEV_TEST_HW, "SD card",             hw_test_sd },
 };
 static const int s_count = (int)(sizeof(s_tests) / sizeof(s_tests[0]));
 

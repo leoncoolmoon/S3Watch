@@ -32,6 +32,10 @@ add_executable(s3watch_tests
     test_utc_tm.c
     test_ip_parse.c
     test_signalk_alert.c
+    test_signalk_fmt.c
+    test_calculator.c
+    ${REPO_ROOT}/components/gui/src/signalk_dashboard_fmt.c
+    ${REPO_ROOT}/components/gui/src/calc_engine.c
 )
 
 target_include_directories(s3watch_tests PRIVATE
@@ -40,6 +44,8 @@ target_include_directories(s3watch_tests PRIVATE
     ${REPO_ROOT}/components/gui/include
     ${REPO_ROOT}/components/signalk_client/include
 )
+
+target_link_libraries(s3watch_tests PRIVATE m)
 
 enable_testing()
 add_test(NAME unit COMMAND s3watch_tests)

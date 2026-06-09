@@ -12,11 +12,15 @@ typedef struct {
 extern void run_utc_tm_tests(int *fails);
 extern void run_ip_parse_tests(int *fails);
 extern void run_signalk_alert_tests(int *fails);
+extern void run_signalk_fmt_tests(int *fails);
+extern void run_calculator_tests(int *fails);
 
 static const suite_t suites[] = {
     { "utc_tm",        run_utc_tm_tests },
     { "ip_parse",      run_ip_parse_tests },
     { "signalk_alert", run_signalk_alert_tests },
+    { "signalk_fmt",   run_signalk_fmt_tests },
+    { "calculator",    run_calculator_tests },
 };
 static const int n_suites = (int)(sizeof(suites) / sizeof(suites[0]));
 
