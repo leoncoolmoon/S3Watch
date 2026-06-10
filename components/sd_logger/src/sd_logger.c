@@ -22,6 +22,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_log_write.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/stream_buffer.h"
@@ -190,7 +191,11 @@ void sd_logger_init(void)
         return;
     }
 
-    if (xTaskCreate(sd_log_writer_task, "sd_log_writer", 3072, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+    // SPIRAM stack: this task writes only to the SD card (FATFS), which does not
+    // disable the flash cache — so it's safe off internal RAM. (No NVS/SPIFFS.)
+    if (xTaskCreateWithCaps(sd_log_writer_task, "sd_log_writer", 3072, NULL,
+                            tskIDLE_PRIORITY + 1, NULL,
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         ESP_LOGW(TAG, "Could not start log writer task — file logging disabled");
         vStreamBufferDelete(s_stream);
         s_stream = NULL;

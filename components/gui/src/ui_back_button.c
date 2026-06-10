@@ -12,6 +12,7 @@
 #include "bsp/esp32_s3_touch_amoled_2_06.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
@@ -88,7 +89,14 @@ static void ui_pmu_back_cb(void* user) {
 void ui_back_button_start(void) {
   ESP_LOGI(TAG, "starting back-button (GPIO 0 ISR + PMU subscriber)");
   // GPIO 0 back-button: ISR-driven, task blocks on a notification.
-  xTaskCreate(ui_back_btn_task, "ui_back_btn", 4096, NULL, 5, &s_back_btn_task);
+  // SPIRAM stack: this task does no flash (NVS/SPIFFS) writes — it only posts a
+  // Back action onto the LVGL thread — so it's safe off internal RAM. (It can't
+  // run while the flash cache is disabled, but it has nothing to do then.)
+  if (xTaskCreateWithCaps(ui_back_btn_task, "ui_back_btn", 4096, NULL, 5,
+                          &s_back_btn_task,
+                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+    ESP_LOGE(TAG, "ui_back_btn task create failed");
+  }
   // PMU short-press while screen is on dispatches the same Back action.
   task_coord_subscribe("pmu_back_btn", ui_pmu_back_cb, NULL,
                        /*on*/  100, /*off*/ 0);

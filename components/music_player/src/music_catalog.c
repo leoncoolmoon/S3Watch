@@ -13,6 +13,11 @@
 // heap_caps_realloc() once the scan completes — the resident catalog ends up
 // far smaller than the cJSON parse tree it was built from, which is freed
 // immediately after.
+//
+// The cJSON parse tree (and the raw file buffer) are large and scale with the
+// library size; they live in PSRAM via the global cJSON allocator hook set in
+// main.cpp (cJSON_InitHooks). Without that hook the per-node mallocs land in
+// internal RAM and a big library overflows it. Keep the hook.
 
 #include "music_catalog.h"
 

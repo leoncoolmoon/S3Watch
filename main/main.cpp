@@ -10,6 +10,8 @@
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "cJSON.h"
 #include "lvgl.h"
 #include "sensors.h"
 #include "settings.h"
@@ -27,9 +29,24 @@
 
 static const char *TAG = "MAIN";
 
+// Route ALL cJSON allocations to PSRAM. cJSON builds its parse tree from many
+// tiny mallocs (one per node + key/value strdup); in internal RAM that scales
+// badly — the music index parse tree alone can exceed the internal heap on a
+// large library, and settings/SD-backup/SignalK parsing all share the same
+// allocator. Installed globally below, before the first parse.
+extern "C" {
+static void *cjson_psram_malloc(size_t sz) { return heap_caps_malloc(sz, MALLOC_CAP_SPIRAM); }
+static void  cjson_psram_free(void *ptr)   { heap_caps_free(ptr); }
+}
+
 extern "C" void app_main(void) {
 
   // esp_log_level_set("lcd_panel.io.spi", ESP_LOG_DEBUG);
+
+  // Install the cJSON PSRAM allocator before anything parses JSON (the first is
+  // settings_init → settings_load). PSRAM is already up at app_main entry.
+  static cJSON_Hooks cjson_hooks = { cjson_psram_malloc, cjson_psram_free };
+  cJSON_InitHooks(&cjson_hooks);
 
   // NVS must be initialised before any component (RTC, BLE) uses it
   esp_err_t nvs_err = nvs_flash_init();

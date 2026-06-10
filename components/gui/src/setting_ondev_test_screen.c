@@ -32,10 +32,15 @@ typedef struct {
     int       n_rows;
     int       passed;
     int       failed;
-    volatile bool running;
 } ctx_t;
 
 static ctx_t *s_ctx;
+
+// Worker-run flag lives OUTSIDE s_ctx: the run task outlives the screen if the
+// user navigates away mid-run (the suite is uncancellable and takes ~1 min), at
+// which point on_delete frees s_ctx. The task must not touch freed memory, so it
+// only ever touches this static.
+static volatile bool s_running = false;
 
 // ── Async-call payload ───────────────────────────────────────────────────
 
@@ -107,20 +112,22 @@ static void on_progress(int index, int total,
 
 static void run_task(void *arg) {
     (void)arg;
-    if (!s_ctx) { vTaskDelete(NULL); return; }
-    s_ctx->running = true;
-    s_ctx->passed = 0;
-    s_ctx->failed = 0;
+    // Must NOT dereference s_ctx — the screen (and s_ctx) can be deleted while
+    // this runs. Progress is delivered via on_progress → apply_progress, which
+    // null-checks s_ctx on the LVGL thread.
     ESP_LOGI(TAG, "Self-test run starting");
     (void)ondev_test_run_all(on_progress, NULL);
     ESP_LOGI(TAG, "Self-test run complete");
-    s_ctx->running = false;
+    s_running = false;
     vTaskDelete(NULL);
 }
 
 static void on_run_clicked(lv_event_t *e) {
     (void)e;
-    if (!s_ctx || s_ctx->running) return;
+    if (!s_ctx || s_running) return;
+    s_running = true;          // set on the LVGL thread to block a double-tap
+    s_ctx->passed = 0;
+    s_ctx->failed = 0;
     // Reset all row indicators to pending and the first to running.
     for (int i = 0; i < s_ctx->n_rows; i++) {
         lv_label_set_text(s_ctx->rows[i].dot, DOT_PENDING);

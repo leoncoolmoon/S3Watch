@@ -78,9 +78,12 @@ void task_coord_start(void)
 {
     // 8 KB stack: subscribers may drive an LVGL render via lv_refr_now()
     // (e.g. wake_button_cb → display_manager_turn_on → synchronous repaint
-    // before backlight). The full LVGL render pipeline + flush callback
-    // wants ~6 KB headroom; 4 KB overflows.
-    BaseType_t rc = xTaskCreate(task_coord_task, "task_coord", 8192, NULL, 4, NULL);
+    // before backlight). The full LVGL render pipeline + flush callback runs on
+    // this task (wake path calls lv_refr_now), so keep generous headroom.
+    // Right-sized from measured high-water (~4.4 KB peak incl. a wake render) —
+    // re-measure (Run Tests Stack/heap report) before shrinking. Must stay
+    // INTERNAL: runs rtc_minute_sync NVS commit.
+    BaseType_t rc = xTaskCreate(task_coord_task, "task_coord", 7168, NULL, 4, NULL);
     if (rc != pdPASS) {
         ESP_LOGE(TAG, "task creation failed");
     }

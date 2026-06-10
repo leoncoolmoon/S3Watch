@@ -21,6 +21,7 @@
 #include "wifi_manager.h"
 #include "power_manager.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_websocket_client.h"
@@ -47,8 +48,10 @@ static const path_map_t s_paths[] = {
     { "environment.wind.speedApparent",    SIGNALK_PATH_WIND_SPEED_APPARENT },
 };
 
-static signalk_value_t      s_values[SIGNALK_PATH_COUNT];
-static signalk_alert_t      s_alerts[SIGNALK_ALERT_MAX_ACTIVE];
+// In PSRAM (allocated in signalk_client_init) to keep them off scarce internal
+// RAM — they're cold (1 Hz reads + websocket-task critical sections, no DMA/ISR).
+static signalk_value_t     *s_values;   // [SIGNALK_PATH_COUNT]
+static signalk_alert_t     *s_alerts;   // [SIGNALK_ALERT_MAX_ACTIVE]
 static signalk_state_t      s_state = SIGNALK_STATE_IDLE;
 static esp_websocket_client_handle_t s_ws = NULL;
 static portMUX_TYPE         s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -242,7 +245,7 @@ void signalk_test_inject_delta(const char *json, int len) {
 
 void signalk_test_clear_values(void) {
     portENTER_CRITICAL(&s_mux);
-    memset(s_values, 0, sizeof(s_values));
+    memset(s_values, 0, SIGNALK_PATH_COUNT * sizeof(*s_values));
     portEXIT_CRITICAL(&s_mux);
 }
 
@@ -399,8 +402,13 @@ static void on_pm_event(pm_event_t evt, void *ctx)
 }
 
 void signalk_client_init(void) {
-    memset(s_values, 0, sizeof(s_values));
-    memset(s_alerts, 0, sizeof(s_alerts));
+    if (!s_values) s_values = heap_caps_malloc(SIGNALK_PATH_COUNT * sizeof(*s_values),
+                                               MALLOC_CAP_SPIRAM);
+    if (!s_alerts) s_alerts = heap_caps_malloc(SIGNALK_ALERT_MAX_ACTIVE * sizeof(*s_alerts),
+                                               MALLOC_CAP_SPIRAM);
+    if (!s_values || !s_alerts) { ESP_LOGE(TAG, "signalk cache alloc failed"); return; }
+    memset(s_values, 0, SIGNALK_PATH_COUNT * sizeof(*s_values));
+    memset(s_alerts, 0, SIGNALK_ALERT_MAX_ACTIVE * sizeof(*s_alerts));
     if (!s_lifecycle_mux) s_lifecycle_mux = xSemaphoreCreateMutex();
     esp_event_handler_register(WIFI_MANAGER_EVENT_BASE, ESP_EVENT_ANY_ID,
                                 wifi_evt, NULL);

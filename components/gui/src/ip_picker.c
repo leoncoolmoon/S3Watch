@@ -5,6 +5,7 @@
 #include "ip_parse.h"
 #include "ui.h"
 #include "ui_fonts.h"
+#include "esp_heap_caps.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -17,12 +18,18 @@ typedef struct {
     void *user;
 } ip_ctx_t;
 
-// "000\n001\n...\n255" — built once at file scope, reused by every picker.
-static char s_octet_opts[256 * 4 + 1];
+// "000\n001\n...\n255" — built once, in PSRAM (off scarce internal RAM), reused
+// by every picker. Lazily allocated on first use (when the IP picker is shown).
+#define OCTET_OPTS_SIZE (256 * 4 + 1)
+static char *s_octet_opts;
 static bool s_octet_opts_ready = false;
 
 static void build_octet_opts(void) {
     if (s_octet_opts_ready) return;
+    if (!s_octet_opts) {
+        s_octet_opts = heap_caps_malloc(OCTET_OPTS_SIZE, MALLOC_CAP_SPIRAM);
+        if (!s_octet_opts) return;
+    }
     char *p = s_octet_opts;
     for (int i = 0; i < 256; i++) {
         p += snprintf(p, 5, i < 255 ? "%d\n" : "%d", i);

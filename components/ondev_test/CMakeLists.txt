@@ -23,6 +23,7 @@ idf_component_register(
 
         # Hardware tests
         "src/hw_test_heap.c"
+        "src/hw_test_stackreport.c"
         "src/hw_test_i2c_scan.c"
         "src/hw_test_axp.c"
         "src/hw_test_rtc.c"

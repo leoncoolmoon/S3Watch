@@ -34,6 +34,7 @@ extern bool sw_suite_settings            (char *detail, size_t n);
 
 // Hardware
 extern bool hw_test_heap        (char *detail, size_t n);
+extern bool hw_test_stackreport (char *detail, size_t n);
 extern bool hw_test_i2c_scan    (char *detail, size_t n);
 extern bool hw_test_axp         (char *detail, size_t n);
 extern bool hw_test_rtc         (char *detail, size_t n);
@@ -60,6 +61,7 @@ static const test_t s_tests[] = {
 
     // Hardware section
     { ONDEV_TEST_HW, "Heap snapshot",       hw_test_heap },
+    { ONDEV_TEST_HW, "Stack/heap report",   hw_test_stackreport },
     { ONDEV_TEST_HW, "I2C scan",            hw_test_i2c_scan },
     { ONDEV_TEST_HW, "AXP2101",             hw_test_axp },
     { ONDEV_TEST_HW, "RTC",                 hw_test_rtc },
