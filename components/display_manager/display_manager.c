@@ -95,10 +95,13 @@ static void display_sleep_impl(void)
     // I2C and auto-exits on touch, keeping the wake path simple.
     (void)bsp_extra_touch_set_mode(FT3168_MODE_MONITOR);
 
-    // Send DCS panel sleep commands.  bsp_display_keep_aldo_alive(true) was set
-    // in power_manager_init(), so this call only touches the panel, not ALDOs.
+    // Send DCS panel sleep-in (panel only — power_manager owns the rails), then
+    // release the DISPLAY lock. That cuts ALDO1/2/4, fully powering down the panel
+    // for low standby; wake does a full reinit. Order matters: sleep-in first, then
+    // pull power.
     bsp_display_sleep();
     bsp_display_brightness_set(0);
+    power_manager_rail_release(PM_RAIL_CLIENT_DISPLAY);
 
     // Reset cycle/dim state so the next display-on session starts fresh.
     s_dimmed           = false;
@@ -114,9 +117,12 @@ static void display_wake_impl(void)
     if (display_on) return;
     ESP_LOGI(TAG, "Turning display on");
 
-    // Panel is in DCS sleep (ALDOs never cut, no hardware reset). Sleep-Out is
-    // all that is needed to bring it back.
-    bsp_display_wake();
+    // Re-hold the DISPLAY lock to power ALDO1/2/4 back on, let them settle, then
+    // fully reinit the panel — it was power-cycled during sleep, so DCS Sleep-Out
+    // is not enough.
+    power_manager_rail_hold(PM_RAIL_CLIENT_DISPLAY);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    bsp_display_wake_from_gated();
 
     // Reset I2C bus after ALDO rails restore to clear any stuck state.
     bsp_extra_i2c_recover();

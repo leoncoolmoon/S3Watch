@@ -4,6 +4,29 @@
 
 This document maps the AXP2101 PMU outputs to board power rails and identifies the components powered by each rail based on the available schematic.
 
+## Firmware ALDO gating model
+
+`power_manager` is the **sole owner** of the switchable ALDO rails — the only code that calls `bsp_power_rail_enable`. Consumers acquire a lock (`power_manager_rail_hold/release`) for the rail group they need; a rail is powered iff some client holds it (toggled on the 0↔1 refcount edge). Groups, gated **individually** (never all-four together):
+
+| Lock client | Rails | On when |
+| --- | --- | --- |
+| `PM_RAIL_CLIENT_AUDIO` | ALDO3 (A3V3) | a codec is open (`audio_manager`) — i.e. audio is playing |
+| `PM_RAIL_CLIENT_DISPLAY` | ALDO1, ALDO2, ALDO4 | the display is on (`display_manager`) — cut in display-off |
+
+Because the AMOLED panel rails (ALDO1/2/4) are cut in display-off, the panel is power-cycled; wake does a **full panel reinit** (`bsp_display_wake_from_gated()`), not a DCS Sleep-Out. The BSP's own sleep-time gating is bypassed via `bsp_display_keep_aldo_alive(true)`.
+
+## Measuring battery power (no current ADC)
+
+The AXP2101 has **no battery-current ADC** — its 14-bit ADC measures only VBAT, VBUS, VSYS, TS, and die-temperature (datasheet Table 6-7). The only current info is REG01[6:5] "Battery Current Direction" (charge/discharge/standby — direction, not magnitude). So instantaneous mA is **not** readable; battery power is measured from the **E-Gauge SOC% + VBAT drain over time**.
+
+`power_manager` logs a telemetry line every 60 s **when on battery** (skipped on USB), captured to `/sdcard/logs/` when SD logging is enabled (Settings → SD logging):
+
+```
+PWRLOG up=<uptime_s> awake=<0/1> soc=<pct> vbat=<mV> aldo=<a1><a2><a3><a4>
+```
+
+`awake` = display on/off; `aldo` = the live AXP enable bits for ALDO1-4 (so `aldo=...0` in display-off proves the panel rails are physically cut; `a3=1` ⇒ audio active). To get a drain figure: `grep PWRLOG`, take the SOC%/VBAT slope over a multi-hour window (SOC is 1%-resolution), and compare display-off vs display-on, or this build vs a prior one over the same SOC band. `drain_mA ≈ ΔSOC% · C(mAh) / Δt`.
+
 ---
 
 # PMU Output Summary

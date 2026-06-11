@@ -36,7 +36,7 @@ Open the codec for the given format. Acquires the PM no-sleep lock and ALDO3 rai
 ```c
 void audio_manager_close(am_client_t client);
 ```
-Mute → 10 ms settle → close → release PM lock and ALDO rail. For `AM_CLIENT_NOTIFY` and `AM_CLIENT_ALARM` (any non-MUSIC client), additionally calls the registered `resume_fn` so music restarts automatically.
+Mute → 10 ms settle → close → release PM lock and ALDO rail. For `AM_CLIENT_NOTIFY` and `AM_CLIENT_ALARM` (any non-MUSIC client), additionally calls the registered `resume_fn` so music restarts automatically — **but only if this client actually paused playing music on open** (it tracks that internally). Music the user had already paused is left paused.
 
 ---
 

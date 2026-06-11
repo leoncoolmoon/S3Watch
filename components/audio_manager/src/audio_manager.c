@@ -20,6 +20,10 @@ static int                         s_volume    = 60;
 static SemaphoreHandle_t           s_mutex     = NULL;
 static am_pause_fn_t               s_pause_fn  = NULL;
 static am_resume_fn_t              s_resume_fn = NULL;
+// True when a NOTIFY/ALARM open actually paused *playing* music — so close()
+// only auto-resumes music it preempted, not music the user had already paused
+// (user-pause closes the codec, so need_pause is false and this stays false).
+static bool                        s_music_preempted = false;
 
 static void am_pm_cb(pm_event_t evt, void *ctx)
 {
@@ -30,7 +34,14 @@ static void am_pm_cb(pm_event_t evt, void *ctx)
 esp_err_t audio_manager_init(void)
 {
     if (s_spk) return ESP_OK;
+    // ALDO3 (audio analog) is off until something holds the AUDIO lock. Power it
+    // for codec bring-up, then release — per-play opens re-acquire it, and the codec
+    // is reconfigured on each esp_codec_dev_open, so it's fine that ALDO3 drops in
+    // between.
+    power_manager_rail_hold(PM_RAIL_CLIENT_AUDIO);
+    vTaskDelay(pdMS_TO_TICKS(20));   // let ALDO3 settle before codec I2C
     s_spk = bsp_audio_codec_speaker_init();
+    power_manager_rail_release(PM_RAIL_CLIENT_AUDIO);
     if (!s_spk) {
         ESP_LOGE(TAG, "speaker init failed");
         return ESP_FAIL;
@@ -54,7 +65,10 @@ esp_err_t audio_manager_open(am_client_t client,
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         bool need_pause = s_open && s_holder == AM_CLIENT_MUSIC;
         xSemaphoreGive(s_mutex);
-        if (need_pause && s_pause_fn) s_pause_fn();
+        if (need_pause && s_pause_fn) {
+            s_pause_fn();
+            s_music_preempted = true;  // we paused playing music; resume it on close
+        }
     }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -84,12 +98,20 @@ esp_err_t audio_manager_open(am_client_t client,
         power_manager_rail_release(PM_RAIL_CLIENT_AUDIO);
     }
 
+    // Power ALDO3 (held off until now) + take the no-sleep lock BEFORE opening the
+    // codec, and let the analog rail settle — the codec I2C config needs it live.
+    power_manager_no_sleep_hold();
+    power_manager_rail_hold(PM_RAIL_CLIENT_AUDIO);
+    vTaskDelay(pdMS_TO_TICKS(10));   // ALDO3 ramp before codec I2C
+
     esp_codec_dev_sample_info_t fs = {
         .sample_rate     = (int)hz,
         .channel         = (int)ch,
         .bits_per_sample = (int)bits,
     };
     if (esp_codec_dev_open(s_spk, &fs) != ESP_OK) {
+        power_manager_rail_release(PM_RAIL_CLIENT_AUDIO);
+        power_manager_no_sleep_release();
         xSemaphoreGive(s_mutex);
         ESP_LOGE(TAG, "codec open failed (%u Hz %u-bit %u-ch)",
                  (unsigned)hz, (unsigned)bits, (unsigned)ch);
@@ -99,8 +121,6 @@ esp_err_t audio_manager_open(am_client_t client,
     s_fmt    = fs;
     s_open   = true;
     s_holder = client;
-    power_manager_no_sleep_hold();
-    power_manager_rail_hold(PM_RAIL_CLIENT_AUDIO);
     esp_codec_dev_set_out_vol(s_spk, s_volume);
     vTaskDelay(pdMS_TO_TICKS(10));
     esp_codec_dev_set_out_mute(s_spk, false);
@@ -122,11 +142,14 @@ void audio_manager_close(am_client_t client)
     s_open = false;
     power_manager_no_sleep_release();
     power_manager_rail_release(PM_RAIL_CLIENT_AUDIO);
-    bool was_high_prio = (client != AM_CLIENT_MUSIC);
+    bool resume_music = (client != AM_CLIENT_MUSIC) && s_music_preempted;
+    if (client != AM_CLIENT_MUSIC) s_music_preempted = false;
     xSemaphoreGive(s_mutex);
 
-    // After NOTIFY/ALARM releases, auto-resume music (async — just posts a command).
-    if (was_high_prio && s_resume_fn) s_resume_fn();
+    // Auto-resume music only if THIS NOTIFY/ALARM actually paused playing music —
+    // not if the user had already paused it (then we never paused it, so the flag
+    // is false and we leave it paused).
+    if (resume_music && s_resume_fn) s_resume_fn();
 }
 
 int audio_manager_write(const void *data, int len)

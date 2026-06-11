@@ -62,6 +62,11 @@ void music_player_prev(void);
 void music_player_set_shuffle(bool on);
 bool music_player_get_shuffle(void);
 
+// Forget the current track entirely: stop output and release the decoder/file
+// (the SD mount + in-memory catalog are kept). After this, now-playing is
+// inactive. No-op if the engine was never started.
+void music_player_stop(void);
+
 typedef struct {
     bool     active;            // false until a track has ever been loaded
     bool     playing;           // true = audibly playing, false = paused
@@ -76,6 +81,10 @@ typedef struct {
 // Thread-safe snapshot for UI polling (now-playing screen, mini-indicator).
 // Safe to call even if the engine was never started (returns active=false).
 void music_player_get_now_playing(music_now_playing_t *out);
+
+// True iff a track is loaded AND audibly playing (not paused/stopped). Used by
+// the display-wake hook to bring the watch up on the Music Now-Playing screen.
+bool music_player_is_playing(void);
 
 #ifdef __cplusplus
 }

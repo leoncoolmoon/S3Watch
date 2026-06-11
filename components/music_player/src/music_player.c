@@ -134,6 +134,15 @@ void music_player_get_now_playing(music_now_playing_t *out)
     portEXIT_CRITICAL(&s_mux);
 }
 
+bool music_player_is_playing(void)
+{
+    bool v;
+    portENTER_CRITICAL(&s_mux);
+    v = s_now.active && s_now.playing;
+    portEXIT_CRITICAL(&s_mux);
+    return v;
+}
+
 bool music_player_get_shuffle(void)
 {
     bool v;
@@ -199,6 +208,7 @@ typedef enum {
     CMD_PREV,
     CMD_PAUSE,   // triggered by audio_manager when NOTIFY preempts: flush + close + signal s_pause_done
     CMD_RESUME,  // triggered by audio_manager after NOTIFY finishes: reopen + set_playing
+    CMD_STOP,    // forget the current track entirely: flush + close codec + decoder, clear now-playing
 } player_cmd_type_t;
 
 typedef struct {
@@ -586,6 +596,18 @@ static void handle_command(const player_cmd_t *cmd)
             if (open_codec(hz, ch)) set_playing(true);
         }
         break;
+
+    case CMD_STOP:
+        // Forget the current track: stop output and release the decoder/file so
+        // a later open starts fresh. The SD mount + in-memory catalog stay.
+        flush_pcm_stream();
+        close_codec();
+        close_track();
+        portENTER_CRITICAL(&s_mux);
+        s_now.active  = false;
+        s_now.playing = false;
+        portEXIT_CRITICAL(&s_mux);
+        break;
     }
 }
 
@@ -706,5 +728,12 @@ void music_player_prev(void)
 {
     if (!s_task) return;
     player_cmd_t cmd = { .type = CMD_PREV };
+    (void)xQueueSend(s_cmd_queue, &cmd, 0);
+}
+
+void music_player_stop(void)
+{
+    if (!s_task) return;  // engine never started — nothing to forget
+    player_cmd_t cmd = { .type = CMD_STOP };
     (void)xQueueSend(s_cmd_queue, &cmd, 0);
 }

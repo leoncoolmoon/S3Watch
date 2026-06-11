@@ -32,6 +32,10 @@ extern "C" {
     // (with Dismiss) rather than the watchface. Must run on the LVGL thread.
     void ui_open_alarm_app(void);
 
+    // Open the Music app straight to Now Playing. Used by the display-wake hook
+    // so an actively-playing track comes up ready to pause/stop. LVGL thread.
+    void ui_open_music_app(void);
+
     void ui_init(void);
     void ui_task(void* pvParameters);
 

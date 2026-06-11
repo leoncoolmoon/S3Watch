@@ -22,12 +22,13 @@ CONFIG_SPIRAM_RODATA=y
 CONFIG_SPIRAM_SPEED_80M=y
 # Internal RAM is the scarce resource on this board. Allocations below this
 # threshold are forced into internal RAM; lowering it (default 16384) pushes
-# larger general allocations to the near-empty PSRAM. Kept at 2048 (not 4096):
-# the LCD flush bounce buffer (~13 KB) needs a contiguous internal block, so we
-# want the extra internal headroom 2048 gives over 4096. (Trade-off: 2048 is a
-# bit slower on SPIFFS I/O.) DMA/ISR buffers request MALLOC_CAP_DMA/INTERNAL
-# explicitly, so they stay internal regardless.
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=2048
+# larger general allocations to the near-empty PSRAM. 4096 is the balance: it
+# offloads the cold medium allocations without pushing the tiny/hot ones (LVGL,
+# SPIFFS work buffers) to slower PSRAM (2048 measurably slowed SPIFFS I/O). The
+# stack right-sizing + PSRAM moves freed enough internal (~30 KB largest block)
+# that the ~13 KB LCD bounce buffer no longer needs the extra headroom 2048 gave.
+# DMA/ISR buffers request MALLOC_CAP_DMA/INTERNAL explicitly, so they stay internal.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y

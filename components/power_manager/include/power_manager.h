@@ -23,11 +23,13 @@ typedef void (*pm_event_cb_t)(pm_event_t event, void *ctx);
 void power_manager_add_listener(pm_event_cb_t cb, void *ctx);
 
 // ── ALDO rail resource management ────────────────────────────────────────
-// Reference-counted per named client.  power_manager maps each client to
-// its set of BSP rails internally; callers never reference bsp_power_rail_t.
-// hold/release are ISR-safe (no I2C) — actual rail writes happen in the
-// sleep/wake sequences.
-typedef enum { PM_RAIL_CLIENT_AUDIO } pm_rail_client_t;
+// power_manager is the sole owner of the ALDO rails; consumers only hold a lock
+// for the rail group they need and power_manager keeps each rail on while any
+// lock on it is held. AUDIO → ALDO3 (audio analog); DISPLAY → ALDO1/2/4 (the
+// AMOLED panel rails, switched as one group). hold/release perform the actual
+// AXP2101 rail write on the 0↔1 refcount edge, so they do I2C — call from task
+// context only (not from an ISR).
+typedef enum { PM_RAIL_CLIENT_AUDIO, PM_RAIL_CLIENT_DISPLAY } pm_rail_client_t;
 void power_manager_rail_hold(pm_rail_client_t client);
 void power_manager_rail_release(pm_rail_client_t client);
 

@@ -82,6 +82,14 @@ Advance or rewind by one track. Respects shuffle if enabled.
 
 ---
 
+### `music_player_stop`
+```c
+void music_player_stop(void);
+```
+Forget the current track entirely: stop output, release the decoder + file handle, and mark now-playing inactive (`active=false`). The SD mount and in-memory catalog are kept, so the next `music_player_play()` starts cleanly. No-op if the engine was never started. Used by the Music app to drop a paused track when the user leaves the app.
+
+---
+
 ### `music_player_set_shuffle` / `music_player_get_shuffle`
 ```c
 void music_player_set_shuffle(bool on);
@@ -96,3 +104,11 @@ Enable or disable shuffle mode. When on, `next` and `prev` pick a random track (
 void music_player_get_now_playing(music_now_playing_t *out);
 ```
 Thread-safe snapshot of current playback state. Safe to call from LVGL/UI task. Returns `active=false` if the engine was never started.
+
+---
+
+### `music_player_is_playing`
+```c
+bool music_player_is_playing(void);
+```
+Thread-safe; true iff a track is loaded **and** audibly playing (not paused/stopped). Used by the display-wake hook to bring the watch up on the Music Now-Playing screen for one-tap pause/stop.

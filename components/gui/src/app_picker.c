@@ -92,6 +92,20 @@ void ui_open_alarm_app(void)
     ui_app_tile_show();
 }
 
+// Open the Music app straight to Now Playing. Called on the LVGL thread by the
+// display-wake hook when a track is actively playing, for one-tap pause/stop.
+void ui_open_music_app(void)
+{
+    lv_obj_t *t = ui_app_tile_acquire();
+    if (!t) {
+        ESP_LOGE(TAG, "failed to acquire app tile for music");
+        return;
+    }
+    music_app_create(t);
+    music_app_goto_now_playing();
+    ui_app_tile_show();
+}
+
 // ---------------------------------------------------------------------------
 // Screen construction
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@
 #include "watchface.h"
 #include "ui_tileview.h"
 #include "alarm_manager.h"
+#include "music_player.h"
 #include "display_manager.h"
 #include "bsp/esp32_s3_touch_amoled_2_06.h"
 #include "bsp/esp-bsp.h"
@@ -73,12 +74,14 @@ static void ui_battery_refresh_cb(void* user) {
 // is already correct.
 static void pre_show_cb(void) {
   // Normally every wake comes up on the watchface, regardless of which tile the
-  // user was viewing before the screen slept. Exception: if an alarm is ringing,
-  // bring the watch up on the Alarm app so Dismiss is one tap away. Must happen
-  // before the refresh calls below so the labels we update belong to the
-  // now-active tile.
+  // user was viewing before the screen slept. Exceptions, in priority order:
+  // a ringing alarm wins (Dismiss one tap away); else actively-playing music
+  // comes up on Now Playing (pause/stop one tap away). Must happen before the
+  // refresh calls below so the labels we update belong to the now-active tile.
   if (alarm_manager_is_firing()) {
     ui_open_alarm_app();
+  } else if (music_player_is_playing()) {
+    ui_open_music_app();
   } else {
     ui_tileview_reset_to_watchface();
   }

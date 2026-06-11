@@ -27,7 +27,7 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
   - **Stopwatch** — start/stop/lap/reset with centisecond precision (`esp_timer_get_time()`), persists state across app open/close, up to 50 laps
   - **Alarm Clock** — single one-shot alarm with hour/minute rollers, on/off toggle, dismiss button. Time + armed state persist across reboot. Fires even while the display is asleep: wakes the watch onto the alarm app and loops the selected alarm sound, which **keeps playing through display sleep** until you Dismiss it or the auto-silence timeout (Settings → Alarm Timeout, default 10 min) stops it. One-shot — disarms after it fires.
   - **Calendar** — read-only monthly reference view (LVGL `lv_calendar`) with today highlighted and built-in header arrows to page to the previous/next month; no events or notifications
-  - **Music** — Artist → Album → Track browser + Now Playing screen, streaming MP3s straight off the SD card (catalog driven by an `INDEX.JSN` built by the [music-sync](doc/music-sync/) tool); playback runs in its own background task so it keeps going while you navigate elsewhere. Now Playing has image-based transport controls (Shuffle / Prev / Play-Pause / Next); in-app `<` back button navigates browse levels without closing the app
+  - **Music** — Artist → Album → Track browser + Now Playing screen, streaming MP3s straight off the SD card (catalog driven by an `INDEX.JSN` built by the [music-sync](doc/music-sync/) tool); playback runs in its own background task so it keeps going while you navigate elsewhere. Now Playing has image-based transport controls (Shuffle / Prev / Play-Pause / Next); in-app `<` back button navigates browse levels without closing the app. While a track is actively playing, **waking the display comes up on Now Playing** (pause/stop one tap away). Leaving the app while **playing** reopens on Now Playing; leaving while **not playing** reopens at the library root — and a **paused** track is forgotten (stopped) on leave
   - **Calculator** — four-function calculator with iOS-style layout (function row / digit grid / double-wide zero). Left-to-right evaluation; chained `=` repeats the last operator with the remembered right operand; `C` clears current input, second `C` clears all state
 
 ### SignalK marine extension
@@ -80,7 +80,7 @@ The UI is a 2D tileview anchored on the watchface. All transitions are gesture-d
 
 The app tile at (1,2) is created on demand (`ui_app_tile_acquire/show/close` in `ui_tileview.c`) and torn down via `lv_obj_del_async` whenever the tileview navigates away from it — mirroring the existing dynamic Settings sub-tile pattern at (2,1)/(3,1).
 
-**Always return to the watchface on wake** — `display_manager`'s pre-show hook snaps the tileview back to (0,1) before the backlight comes on, so every wake starts at home.
+**Wake starts at home, with two exceptions** — `display_manager`'s pre-show hook snaps the tileview back to the watchface (0,1) before the backlight comes on, so every wake normally starts at home. In priority order, the exceptions: a **ringing alarm** comes up on the Alarm app (Dismiss one tap away); else **actively-playing music** comes up on Music Now Playing (pause/stop one tap away).
 
 ---
 

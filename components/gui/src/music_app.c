@@ -495,6 +495,21 @@ static void show_level(music_level_t level)
 static void music_app_on_delete(lv_event_t *e)
 {
     (void)e;
+    // Decide where a *future* open lands, based on play state as we leave:
+    //   playing      -> reopen on Now Playing (keep the track)
+    //   not playing  -> reopen at the library root; if a track was paused,
+    //                   forget it (stop the player) so it doesn't linger.
+    music_now_playing_t np;
+    music_player_get_now_playing(&np);
+    if (np.active && np.playing) {
+        s_level = LVL_NOW_PLAYING;
+    } else {
+        if (np.active) music_player_stop();   // forget the paused track
+        s_level        = LVL_ARTISTS;
+        s_artist_index = 0;
+        s_album_index  = 0;
+    }
+
     if (s_np_timer) { lv_timer_del(s_np_timer); s_np_timer = NULL; }
     // Deliberately NOT cancelling load_complete_async here (unlike
     // wifi_screens.c's scan_on_delete, which must cancel do_scan_update to
@@ -505,7 +520,8 @@ static void music_app_on_delete(lv_event_t *e)
     // (permanently blocking retries) without preventing anything unsafe.
     s_screen = s_title = s_back_btn = s_body = NULL;
     s_np_title = s_np_artist = s_np_album = s_np_bar = s_np_pos = s_np_dur = s_np_play = NULL;
-    ESP_LOGI(TAG, "screen deleted (navigation state preserved)");
+    ESP_LOGI(TAG, "screen deleted (reopen target: %s)",
+             s_level == LVL_NOW_PLAYING ? "Now Playing" : "library root");
 }
 
 void music_app_create(lv_obj_t *parent)
@@ -575,4 +591,11 @@ void music_app_create(lv_obj_t *parent)
         show_loading();
         start_catalog_load();
     }
+}
+
+void music_app_goto_now_playing(void)
+{
+    if (!s_screen || !lv_obj_is_valid(s_screen)) return;
+    if (!music_player_catalog_ready()) return;
+    show_level(LVL_NOW_PLAYING);
 }

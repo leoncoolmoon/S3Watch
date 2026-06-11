@@ -7,7 +7,7 @@ Owns the single ES8311 speaker codec hardware, the minimp3 decoder library, and 
 - Calls `bsp_audio_codec_speaker_init()` once at boot — no other component touches the codec handle.
 - Holds the `ESP_PM_NO_LIGHT_SLEEP` lock and ALDO3 (A3V3 analog rail) for exactly as long as the codec is open.
 - Registers a `power_manager` sleep listener. On `PM_EVT_PREPARE_SLEEP`: leaves `AM_CLIENT_MUSIC` and `AM_CLIENT_ALARM` untouched (their PM lock and ALDO3 hold keep the CPU awake and audio supply live while the AMOLED panel DCS-sleeps), and only closes a `AM_CLIENT_NOTIFY` stream if one happens to be mid-play.
-- Arbitrates between three client tiers: `AM_CLIENT_NOTIFY` and `AM_CLIENT_ALARM` (high priority) and `AM_CLIENT_MUSIC` (low priority). When a notification or alarm wants the codec while music is playing, music is paused, the sound plays, then music auto-resumes. NOTIFY and ALARM differ only at display-sleep: NOTIFY is closed, ALARM keeps ringing.
+- Arbitrates between three client tiers: `AM_CLIENT_NOTIFY` and `AM_CLIENT_ALARM` (high priority) and `AM_CLIENT_MUSIC` (low priority). When a notification or alarm wants the codec while music is **playing**, music is paused, the sound plays, then music auto-resumes. The resume only fires if the high-priority client actually paused *playing* music — if the user had already paused music (which closes the codec), it stays paused. NOTIFY and ALARM differ only at display-sleep: NOTIFY is closed, ALARM keeps ringing.
 - Houses and compiles the minimp3 decoder (`third_party/minimp3/`). Its headers are exported on the public include path so `music_player` and other dependents can use `minimp3_ex.h` without an additional dependency.
 - Provides `audio_manager_play_mp3()` for one-shot MP3 file playback (e.g. notifications). Internally spawns a SPIRAM decode task so callers with small stacks are safe.
 
@@ -40,9 +40,9 @@ bsp_display_start();
 
 When `audio_manager_open(AM_CLIENT_NOTIFY, …)` is called while `AM_CLIENT_MUSIC` holds the codec:
 
-1. audio_manager calls the registered `pause_fn` (blocks until music closes).
+1. audio_manager calls the registered `pause_fn` (blocks until music closes) **and records that it preempted playing music** (`s_music_preempted`).
 2. Codec opens for the notification.
-3. When `audio_manager_close(AM_CLIENT_NOTIFY)` is called, audio_manager calls `resume_fn` (async).
+3. When `audio_manager_close(AM_CLIENT_NOTIFY)` is called, audio_manager calls `resume_fn` (async) **only if it set that flag** — so a track the user had already paused (codec already closed, so step 1 never ran) stays paused.
 4. Music reopens the codec and continues from where it left off.
 
 `music_player` registers these hooks at engine-start via `audio_manager_register_music_hooks()`.

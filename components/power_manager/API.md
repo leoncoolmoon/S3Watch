@@ -63,7 +63,11 @@ Reference-counted wrapper around the shared `ESP_PM_NO_LIGHT_SLEEP` lock. Acquir
 void power_manager_rail_hold(pm_rail_client_t client);
 void power_manager_rail_release(pm_rail_client_t client);
 ```
-Reference-counted ALDO rail management. While any hold is outstanding for a client, `power_manager_request_sleep()` will not gate that client's rails. `PM_RAIL_CLIENT_AUDIO` maps to ALDO3 (A3V3). Always pair.
+The ALDO rail lock. **power_manager is the sole owner of every ALDO rail** — these are the only calls that turn a rail on/off (via `bsp_power_rail_enable`), on the 0↔1 refcount edge: a rail is powered iff some client holds it. Clients:
+- `PM_RAIL_CLIENT_AUDIO` → ALDO3 (A3V3, audio analog) — held by `audio_manager` while a codec is open, so ALDO3 is on only during audio.
+- `PM_RAIL_CLIENT_DISPLAY` → ALDO1/2/4 (the AMOLED panel rails, switched **as one group**) — held by `display_manager` while the display is on, released on display-off so the panel powers down for low standby (wake does a full panel reinit).
+
+These do AXP2101 I2C, so **call from task context only** (not an ISR). Always pair.
 
 ---
 
@@ -71,4 +75,4 @@ Reference-counted ALDO rail management. While any hold is outstanding for a clie
 ```c
 void power_manager_register_display_ops(const pm_display_ops_t *ops);
 ```
-Register the display sleep/wake vtable. Called once by `display_manager_init()`. `on_sleep` runs before ALDO gating; `on_wake` runs after ALDO restore.
+Register the display sleep/wake vtable. Called once by `display_manager_init()`. `on_sleep` sends DCS sleep-in then releases the DISPLAY rail lock (cuts ALDO1/2/4); `on_wake` re-holds it (powers them) then reinitialises the power-cycled panel.
