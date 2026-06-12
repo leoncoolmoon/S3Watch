@@ -11,6 +11,7 @@
 #include "setting_tz_screen.h"
 #include "setting_watchface_screen.h"
 #include "setting_signalk_screen.h"
+#include "setting_step_screen.h"
 #include "setting_ondev_test_screen.h"
 #include "wifi_screens.h"
 
@@ -37,6 +38,7 @@ static void open_wifi(lv_event_t* e)    { (void)e; lv_indev_wait_release(lv_inde
 static void open_ntp(lv_event_t* e)     { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { ntp_settings_screen_open(t);       ui_dynamic_subtile_show(); } }
 static void open_signalk(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_signalk_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_ondev_test(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_ondev_test_screen_create(t); ui_dynamic_subtile_show(); } }
+static void open_step(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_step_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_time_format(lv_event_t* e) { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_time_format_screen_create(t); ui_dynamic_subtile_show(); } }
 static void open_watchface(lv_event_t* e)   { (void)e; lv_indev_wait_release(lv_indev_active()); lv_obj_t* t = ui_dynamic_subtile_acquire(); if (t) { setting_watchface_screen_create(t);   ui_dynamic_subtile_show(); } }
 static void refresh_values(lv_obj_t* content)
@@ -158,6 +160,7 @@ void settings_menu_screen_create(lv_obj_t* parent)
     (void)make_row(smenu_content, LV_SYMBOL_WIFI, "Wi-Fi", "", open_wifi);
     (void)make_row(smenu_content, LV_SYMBOL_REFRESH, "NTP Server", "", open_ntp);
     (void)make_row(smenu_content, LV_SYMBOL_UPLOAD, "SignalK", "", open_signalk);
+    (void)make_row(smenu_content, LV_SYMBOL_LOOP, "Step Counter", "", open_step);
     r8 = make_row(smenu_content, NULL, "Time Format", settings_get_time_24h() ? "24h" : "12h", open_time_format);
     r9 = make_row(smenu_content, NULL, "Watch Face", settings_get_watchface_style() == 0 ? "Face 1" : "Face 2", open_watchface);
     (void)make_row(smenu_content, LV_SYMBOL_OK, "Run Tests", "", open_ondev_test);

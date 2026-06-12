@@ -6,6 +6,7 @@
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "AUDIO_ALERT";
 
@@ -150,22 +151,36 @@ void audio_alert_notify(void)
     heap_caps_free(buf);
 }
 
+// pv = optional SemaphoreHandle_t given when playback (or the synth fallback)
+// has fully finished — boot_manager blocks the splash→watchface handoff on it.
+// No start delay anymore: boot_manager owns the timing (the old 400 ms pause
+// existed to dodge boot contention back when the tone fired from app_main's
+// tail, after the watchface was already live).
 static void audio_startup_tone_task(void *pv)
 {
-    (void)pv;
-    vTaskDelay(pdMS_TO_TICKS(400));
+    SemaphoreHandle_t done = (SemaphoreHandle_t)pv;
     audio_manager_set_volume((int)settings_get_notify_volume());
     if (audio_manager_play_mp3("/spiffs/boot.mp3", AM_CLIENT_NOTIFY) != ESP_OK) {
         ESP_LOGI(TAG, "boot.mp3 not found, using synthesized tone");
         audio_alert_notify();
     }
+    if (done) xSemaphoreGive(done);
     vTaskDelete(NULL);
 }
 
-void audio_alert_play_startup(void)
+void audio_alert_play_startup(SemaphoreHandle_t done)
 {
-    if (!settings_get_sound()) return;
-    xTaskCreate(audio_startup_tone_task, "tone_startup", 8192, NULL, 3, NULL);
+    // Every early-out must still give `done` — boot_manager waits on it and
+    // must never be left hanging just because there was nothing to play.
+    if (!settings_get_sound()) {
+        if (done) xSemaphoreGive(done);
+        return;
+    }
+    if (xTaskCreate(audio_startup_tone_task, "tone_startup", 8192,
+                    (void *)done, 3, NULL) != pdPASS) {
+        ESP_LOGW(TAG, "startup tone task create failed");
+        if (done) xSemaphoreGive(done);
+    }
 }
 
 void audio_alert_suspend(void)

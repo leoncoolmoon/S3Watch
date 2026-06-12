@@ -33,9 +33,13 @@ static bool               s_radio_running = false;
 // Number of outstanding wifi_manager_hold() calls — see wifi_manager_hold()
 // for why release() must defer while this is nonzero.
 static int                s_hold_count   = 0;
-static bool               s_connected    = false;
+// volatile: read lock-free by wifi_manager_is_connected() from many tasks
+// (aligned bool — atomic read); written under s_lock by the event handler.
+static volatile bool      s_connected    = false;
+// Written under s_lock by the event handler; read via the copy-out getter
+// wifi_manager_get_connected_ssid() (the old pointer-returning getter let
+// readers see a torn string mid-strncpy).
 static char               s_ssid[WIFI_MANAGER_MAX_SSID_LEN];
-static int8_t             s_rssi         = 0;
 static wifi_manager_ap_t  s_scan_results[WIFI_MANAGER_MAX_SCAN_APS];
 static int                s_scan_count   = 0;
 
@@ -81,8 +85,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
 {
     if (base == WIFI_EVENT) {
         if (id == WIFI_EVENT_STA_DISCONNECTED) {
+            xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
             s_connected = false;
             s_ssid[0]   = '\0';
+            xSemaphoreGiveRecursive(s_lock);
             ESP_LOGI(TAG, "Disconnected");
             esp_event_post(WIFI_MANAGER_EVENT_BASE, WIFI_MGR_EVT_DISCONNECTED,
                            NULL, 0, 0);
@@ -118,12 +124,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         wifi_ap_record_t ap;
+        xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
         if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
             strncpy(s_ssid, (char*)ap.ssid, WIFI_MANAGER_MAX_SSID_LEN - 1);
             s_ssid[WIFI_MANAGER_MAX_SSID_LEN - 1] = '\0';
-            s_rssi = ap.rssi;
         }
         s_connected = true;
+        xSemaphoreGiveRecursive(s_lock);
         ESP_LOGI(TAG, "Connected to %s", s_ssid);
         esp_event_post(WIFI_MANAGER_EVENT_BASE, WIFI_MGR_EVT_CONNECTED,
                        NULL, 0, 0);
@@ -314,8 +321,20 @@ esp_err_t wifi_manager_forget(const char *ssid)
 }
 
 bool wifi_manager_is_connected(void)          { return s_connected; }
-const char *wifi_manager_connected_ssid(void) { return s_ssid; }
-int8_t wifi_manager_connected_rssi(void)      { return s_rssi; }
+
+void wifi_manager_get_connected_ssid(char *buf, size_t len)
+{
+    if (!buf || len == 0) return;
+    buf[0] = '\0';
+    if (!s_lock) return;
+    // Copy-out under the lock: the event task rewrites s_ssid on every
+    // connect/disconnect, so handing out a pointer (the old API) let readers
+    // see a torn string mid-strncpy.
+    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
+    strncpy(buf, s_ssid, len - 1);
+    buf[len - 1] = '\0';
+    xSemaphoreGiveRecursive(s_lock);
+}
 
 esp_err_t wifi_manager_release(void)
 {

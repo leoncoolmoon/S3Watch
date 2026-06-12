@@ -10,6 +10,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+// Display cache: always LOCAL civil time (every writer stores localtime_r of
+// the system clock). Read by the rtc_get_* getters for the watchface/UI. The
+// UTC truth lives in the system clock itself (time(NULL)); persistence paths
+// use that, never this cache.
 static struct tm current_time;
 static portMUX_TYPE s_time_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -22,9 +26,13 @@ static const char *months[]        = {"January","February","March","April","May"
 // Minimum plausible timestamp: 2025-01-01 00:00:00 UTC
 #define MIN_VALID_TS ((int64_t)1735689600)
 
-static void nvs_save_time(const struct tm *t)
+// Checkpoint a UTC epoch to NVS. Callers pass the system clock (time(NULL)) —
+// it IS the UTC epoch (settimeofday is applied on every sync) — NOT the
+// current_time display cache, which holds LOCAL civil time. An earlier version
+// saved the cache here, which checkpointed local-as-UTC and skewed the clock
+// by the TZ offset after an RTC-power-loss recovery.
+static void nvs_save_epoch(time_t ts)
 {
-    time_t ts = utc_tm_to_epoch(t);
     if (ts < (time_t)MIN_VALID_TS) return;
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
@@ -69,7 +77,7 @@ static void apply_to_system_time(const struct tm *utc_tm)
 }
 
 // Read PCF85063A, fall back to NVS if invalid (post power-loss recovery),
-// cache the result in current_time, and sync ESP32 internal time to it.
+// sync ESP32 internal time to it, and refresh the local-time display cache.
 static void rtc_sync_from_hw(void)
 {
     struct tm tmp;
@@ -82,9 +90,17 @@ static void rtc_sync_from_hw(void)
         }
     }
     apply_to_system_time(&tmp);
-    portENTER_CRITICAL(&s_time_mux);
-    current_time = tmp;
-    portEXIT_CRITICAL(&s_time_mux);
+    // Refresh the cache as LOCAL — current_time has exactly one meaning
+    // everywhere ("local civil time for the display getters"). It used to be
+    // stored as UTC here but LOCAL in rtc_refresh_now(), and that dual
+    // semantics is what let the sleep checkpoint save local time as UTC.
+    time_t now = time(NULL);
+    struct tm lt;
+    if (localtime_r(&now, &lt)) {
+        portENTER_CRITICAL(&s_time_mux);
+        current_time = lt;
+        portEXIT_CRITICAL(&s_time_mux);
+    }
 }
 
 static void rtc_pm_cb(pm_event_t evt, void *ctx)
@@ -110,9 +126,8 @@ esp_err_t rtc_start(void)
 esp_err_t rtc_get_time(struct tm *utc_time)
 {
     if (!utc_time) return ESP_ERR_INVALID_ARG;
-    // Always return a fresh UTC snapshot from the system clock so callers get
-    // a stable contract regardless of which path last touched current_time
-    // (rtc_sync_from_hw stores UTC; rtc_refresh_now stores local).
+    // Always return a fresh UTC snapshot from the system clock — the UTC
+    // truth; the current_time cache is local display time and never used here.
     time_t now = time(NULL);
     if (now <= 0) return ESP_FAIL;
     if (!gmtime_r(&now, utc_time)) return ESP_FAIL;
@@ -126,11 +141,16 @@ esp_err_t rtc_set_time(const struct tm *utc_time)
 {
     esp_err_t ret = pcf85063a_set_time(utc_time);
     if (ret == ESP_OK) {
-        portENTER_CRITICAL(&s_time_mux);
-        current_time = *utc_time;
-        portEXIT_CRITICAL(&s_time_mux);
         apply_to_system_time(utc_time);
-        nvs_save_time(utc_time);
+        nvs_save_epoch(utc_tm_to_epoch(utc_time));
+        // Refresh the display cache (LOCAL) from the just-set system clock.
+        time_t now = time(NULL);
+        struct tm lt;
+        if (localtime_r(&now, &lt)) {
+            portENTER_CRITICAL(&s_time_mux);
+            current_time = lt;
+            portEXIT_CRITICAL(&s_time_mux);
+        }
     }
     return ret;
 }
@@ -150,11 +170,11 @@ esp_err_t rtc_set_time_from_local(const struct tm *local_time)
 
 void rtc_suspend(void)
 {
-    // Flush current time to NVS before the I2C bus loses power (display sleep
-    // cuts ALDOs that may carry the bus).
-    if (time_is_valid(&current_time)) {
-        nvs_save_time(&current_time);
-    }
+    // Checkpoint the time to NVS before the I2C bus loses power (display sleep
+    // cuts ALDOs that may carry the bus). Save the system clock — UTC by
+    // definition — never the current_time cache (it holds LOCAL display time;
+    // saving it here is what skewed post-power-loss recovery by the TZ offset).
+    nvs_save_epoch(time(NULL));
 }
 
 void rtc_resume(void)
@@ -187,9 +207,10 @@ void rtc_refresh_now(void)
 void rtc_minute_sync(void)
 {
     rtc_sync_from_hw();
-    if (time_is_valid(&current_time)) {
-        nvs_save_time(&current_time);
-    }
+    // System clock was just re-aligned from the PCF85063A — checkpoint it.
+    // (Reading the cache here instead would race the watchface's 1 s
+    // rtc_refresh_now() on the LVGL task; the system clock has no such race.)
+    nvs_save_epoch(time(NULL));
 }
 
 // Take a consistent snapshot so the LVGL task never reads a half-updated struct.

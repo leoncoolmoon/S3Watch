@@ -4,3 +4,4 @@ error.log
 dependencies.lock
 .claude
 AGENTS.md
+CODE_AUDIT_REPORT.md

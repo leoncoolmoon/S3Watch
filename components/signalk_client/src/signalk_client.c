@@ -485,11 +485,21 @@ void signalk_client_stop(void) {
     portEXIT_CRITICAL(&s_mux);
     // Use a bounded timeout so callers on the task-coordinator task (via the
     // display pre-off callback) don't block indefinitely if open_ws() is mid-
-    // connect (network_timeout_ms = 5 s).  If we can't take the lock in time
-    // the WS will be torn down on the next lifecycle call; at worst a single
-    // stale WS frame is received.
+    // connect (network_timeout_ms = 5 s).
     bool locked = s_lifecycle_mux &&
                   (xSemaphoreTake(s_lifecycle_mux, pdMS_TO_TICKS(300)) == pdTRUE);
+    if (!locked) {
+        // Lock busy — open_ws() is mid-connect on the event task. Touching
+        // s_ws here without the lock would race it (use-after-free /
+        // double-destroy), so defer the teardown: s_want_wifi is already
+        // false, so the event path won't open another WS after this, and the
+        // next lifecycle call (re-entering the tile, or the display-sleep
+        // stop, ≤ one display-timeout away) finds the lock free and tears it
+        // down. Only balance the radio hold now — unhold doesn't touch s_ws.
+        if (was_holding) wifi_manager_unhold();
+        ESP_LOGW(TAG, "stop: lifecycle lock busy — deferring WS teardown");
+        return;
+    }
     if (signalk_client_state() != SIGNALK_STATE_IDLE || s_ws) {
         ESP_LOGI(TAG, "stop: closing WS + releasing WiFi");
         if (s_ws) {
@@ -504,5 +514,5 @@ void signalk_client_stop(void) {
     } else if (was_holding) {
         wifi_manager_unhold();
     }
-    if (locked) xSemaphoreGive(s_lifecycle_mux);
+    xSemaphoreGive(s_lifecycle_mux);
 }

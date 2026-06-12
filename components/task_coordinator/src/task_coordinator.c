@@ -6,7 +6,7 @@
 
 static const char *TAG = "TASK_COORD";
 
-#define MAX_SUBS 16
+#define MAX_SUBS 20
 
 typedef struct {
     const char    *name;

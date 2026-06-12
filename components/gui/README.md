@@ -29,13 +29,18 @@ The UI is a 2D tileview. At boot, the watchface tile is active. Swipe gestures n
 | `world_clock` | World clock |
 | `calendar_app` | Calendar view |
 | `calculator_app` | Four-function calculator (iOS-style layout) |
+| `step_app` | Step counter — today's count (big) plus week / lifetime totals and best-day / best-week records, from `step_tracker`; gated by the Settings toggle |
 | `storage_file_explorer` | Browse SD card files |
 | `settings_*` | Settings screens (brightness, sound, timeout, timezone, WiFi, SignalK, backup, etc.) |
 | `setting_ondev_test_screen` | On-device test runner UI |
 
 ## Initialization
 
-`ui_task()` runs as a dedicated FreeRTOS task. It calls `bsp_display_start()`, creates all tile structure, calls `display_manager_init()`, then enters the LVGL port event loop.
+`ui_task()` runs as a dedicated FreeRTOS task spawned by `boot_manager` (stage 4): it builds the tile structure **behind the boot splash** (the main screen is deliberately not loaded), calls `display_manager_init()` (which starts the task_coordinator), wires power events + back button, gives the ready semaphore passed via `pvParameters`, and self-deletes. `boot_manager` then performs the splash→watchface handoff.
+
+## Boot splash (`boot_splash.c`)
+
+Boot-only screen shown by `boot_manager` between `bsp_display_start()` and the watchface: "S3Watch" wordmark, LVGL spinner, firmware version (`esp_app_get_description()`). `boot_splash_show()` renders it synchronously so it's visible the moment the backlight is up; `boot_splash_handoff()` slides the built tileview up over it (`LV_SCR_LOAD_ANIM_OVER_TOP`, 300 ms — the back-nav motion) and deletes the splash via a one-shot timer after the animation lands. Never appears on wake-from-sleep.
 
 ## Music app navigation
 
@@ -59,4 +64,4 @@ Rules of thumb:
 
 ## Dependencies
 
-`display_manager`, `power_manager`, `settings`, `audio_alert`, `music_player`, `signalk_client`, `ntp_sync`, `wifi_manager`, `sensors`, `ondev_test`, `bsp_extra`
+`display_manager`, `power_manager`, `settings`, `audio_alert`, `music_player`, `signalk_client`, `ntp_sync`, `wifi_manager`, `imu_manager`, `step_tracker`, `ondev_test`, `bsp_extra`

@@ -5,6 +5,23 @@
 extern "C" {
 #endif
 
+// Persisted step statistics. Owned/serialized by `settings` (kept here, not in
+// step_tracker, so settings has no dependency back on step_tracker). step_tracker
+// is the live owner; it mirrors a daily snapshot into settings.json (which the SD
+// backup carries) and seeds from here on a fresh-flash / restored boot.
+#define STEP_HIST_DAYS 7
+typedef struct {
+    uint32_t magic;                       // validity/version tag
+    uint32_t lifetime;                    // total steps ever
+    uint32_t today;                       // steps since local midnight
+    int32_t  today_day;                   // local epoch-day (days since 1970) for `today`
+    uint32_t best_day;                    // highest single-day total ever
+    uint32_t best_week;                   // highest rolling-week total ever
+    int32_t  hist_day[STEP_HIST_DAYS];    // last 7 completed days: epoch-day …
+    uint32_t hist_steps[STEP_HIST_DAYS];  //                       … and their totals (ring)
+    uint8_t  hist_head;                   // ring write index
+} step_stats_t;
+
 #define SETTINGS_DISPLAY_TIMEOUT_10S 10000
 #define SETTINGS_DISPLAY_TIMEOUT_20S 20000
 #define SETTINGS_DISPLAY_TIMEOUT_30S 30000
@@ -34,6 +51,18 @@ void settings_set_alarm_min(int min);
 int  settings_get_alarm_min(void);
 void settings_set_alarm_enabled(bool enabled);
 bool settings_get_alarm_enabled(void);
+
+// Step counter: true = run the software step counter; false = IMU Power-Down.
+// Applied at boot and on toggle via imu_manager_set_step_counting().
+void settings_set_step_counter_enabled(bool enabled);
+bool settings_get_step_counter_enabled(void);
+
+// Step statistics snapshot (lifetime/today/history/records). step_tracker mirrors
+// its state here once per day; the setter persists via the normal debounced save,
+// so this lands in settings.json and the SD backup. get fills *out from the loaded
+// snapshot (out->magic == 0 if none was ever stored).
+void settings_set_step_stats(const step_stats_t *stats);
+void settings_get_step_stats(step_stats_t *out);
 
 // Auto-silence timeout for a ringing alarm, in minutes (clamped 1-30, default 10).
 void settings_set_alarm_timeout_min(int minutes);

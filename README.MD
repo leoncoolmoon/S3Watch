@@ -2,7 +2,7 @@
 
 Custom smartwatch firmware built on ESP-IDF 5.x and LVGL 9, targeting the [Waveshare ESP32-S3-Touch-AMOLED-2.06](https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-2.06) development board.
 
-Originally a general-purpose smartwatch; now also a passive viewer for boat data via [SignalK](https://signalk.org/) — swipe up for an app picker (SignalK dashboard, World Clock, Stopwatch, Alarm, Calendar, Music), swipe down for the boat's currently-active alarms/notifications.
+Originally a general-purpose smartwatch; now also a passive viewer for boat data via [SignalK](https://signalk.org/) — swipe up for an app picker (SignalK dashboard, World Clock, Stopwatch, Alarm, Calendar, Music, Calculator, Steps), swipe down for the boat's currently-active alarms/notifications.
 
 <img src="ui_assets/s3watch_0.jpg" width="300"/> <img src="ui_assets/s3watch_1.jpg" width="300"/>
 
@@ -29,6 +29,7 @@ Originally a general-purpose smartwatch; now also a passive viewer for boat data
   - **Calendar** — read-only monthly reference view (LVGL `lv_calendar`) with today highlighted and built-in header arrows to page to the previous/next month; no events or notifications
   - **Music** — Artist → Album → Track browser + Now Playing screen, streaming MP3s straight off the SD card (catalog driven by an `INDEX.JSN` built by the [music-sync](doc/music-sync/) tool); playback runs in its own background task so it keeps going while you navigate elsewhere. Now Playing has image-based transport controls (Shuffle / Prev / Play-Pause / Next); in-app `<` back button navigates browse levels without closing the app. While a track is actively playing, **waking the display comes up on Now Playing** (pause/stop one tap away). Leaving the app while **playing** reopens on Now Playing; leaving while **not playing** reopens at the library root — and a **paused** track is forgotten (stopped) on leave
   - **Calculator** — four-function calculator with iOS-style layout (function row / digit grid / double-wide zero). Left-to-right evaluation; chained `=` repeats the last operator with the remembered right operand; `C` clears current input, second `C` clears all state
+  - **Steps** — software step counter. The board's IMU is a QMI8658**C** (no hardware pedometer), so the accelerometer streams into the chip's FIFO and a peak detector counts steps on the drained samples — the CPU stays asleep between ~1 Hz drains. `step_tracker` aggregates today / week / lifetime totals plus best-day/best-week records, persists them (NVS, flash-wear-throttled) across reboots, and mirrors a daily snapshot into `settings.json` (carried by the SD backup). Off by default to keep the IMU in ~6 µA Power-Down; enable via **Settings → Step Counter**
 
 ### SignalK marine extension
 - **SignalK dashboard app** — launched from the app picker. 2×2 grid of live values in **American nautical units**:
@@ -74,7 +75,7 @@ The UI is a 2D tileview anchored on the watchface. All transitions are gesture-d
                        │ SignalK · World Clock ·    │ ◀─────────────────────── │ SignalK / World Clock /    │
                        │ Stopwatch · Alarm ·        │   swipe left / Back      │ Stopwatch / Alarm Clock /  │
                        │ Calendar · Music ·         │                          │ Calendar / Music /         │
-                       │ Calculator                 │                          │ Calculator                 │
+                       │ Calculator · Steps         │                          │ Calculator / Steps         │
                        └────────────────────────────┘                          └────────────────────────────┘
 ```
 
@@ -220,10 +221,12 @@ S3Watch/
 │   ├── ntp_sync/                               # SNTP; fires on connect, releases on success
 │   ├── audio_alert/                            # MP3 notification via audio_manager; synth fallback
 │   ├── alarm_manager/                          # Alarm engine — scheduling/firing/auto-silence (UI in gui)
+│   ├── boot_manager/                           # Staged power-on: splash + boot tone → services → UI → handoff
 │   ├── music_player/                           # SD-card MP3 catalog + streaming playback engine
 │   ├── sd_manager/                             # Reference-counted SD card mount (shared by sd_logger, music_player, settings)
 │   ├── sd_logger/                              # Mirrors ESP_LOG to /sdcard/logs/ when enabled
-│   ├── sensors/                                # QMI8658 power-down + test-hook accel read
+│   ├── imu_manager/                            # QMI8658C power state + software step counter (FIFO peak detector)
+│   ├── step_tracker/                           # Step stats: lifetime/daily/weekly + records, NVS-throttled persistence + daily settings.json mirror
 │   ├── signalk_client/                         # WebSocket client; value + alert caches
 │   │   ├── src/signalk_client.c                #   parse_delta, WS event handler, lifecycle
 │   │   └── include/signalk_alert_parse.h       #   Pure header (host-testable)

@@ -9,11 +9,13 @@
 #include "wifi_manager.h"
 #include <time.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
 #include "esp_spiffs.h"
+#include "esp_timer.h"   // esp_timer_get_time (monotonic save-debounce clock)
 #include "lvgl.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/timers.h"
+#include "task_coordinator.h"
 #include "cJSON.h"
 
 static const char *TAG = "SETTINGS";
@@ -36,6 +38,7 @@ static const char *TAG = "SETTINGS";
 #define DEFAULT_ALARM_MIN          0
 #define DEFAULT_ALARM_ENABLED      false
 #define DEFAULT_ALARM_TIMEOUT_MIN  10
+#define DEFAULT_STEP_COUNTER_ENABLED false   // IMU stays in Power-Down until enabled
 
 static uint8_t brightness = DEFAULT_BRIGHTNESS;
 static uint32_t display_timeout_ms = DEFAULT_DISPLAY_TIMEOUT;
@@ -53,6 +56,8 @@ static int alarm_hour = DEFAULT_ALARM_HOUR;
 static int alarm_min = DEFAULT_ALARM_MIN;
 static bool alarm_enabled = DEFAULT_ALARM_ENABLED;
 static int alarm_timeout_min = DEFAULT_ALARM_TIMEOUT_MIN;
+static bool step_counter_enabled = DEFAULT_STEP_COUNTER_ENABLED;
+static step_stats_t step_stats = {0};   // step_tracker mirrors its snapshot here
 static int watchface_style = DEFAULT_WATCHFACE_STYLE;
 static int watchface_bg = DEFAULT_WATCHFACE_BG;
 static bool spiffs_ready = false;
@@ -63,31 +68,47 @@ static void apply_tz(void) {
     tzset();
 }
 
-// Debounced save timer (to limit flash writes when sliders change)
-static TimerHandle_t s_save_timer = NULL;
+// Debounced save (limits flash writes when e.g. sliders change): each
+// schedule_save() pushes a deadline 10 s out; the settings_save task_coordinator
+// subscriber performs the SPIFFS write once the deadline passes. House pattern
+// (coordinator-checked deadline — see AGENTS.md "task_coordinator subscription").
+// This used to be a FreeRTOS xTimer, which ran the SPIFFS write on the shared
+// timer-service task — stalling every other software timer behind a flash
+// write (SPIFFS GC can pause for hundreds of ms). On the coordinator the worst
+// case is delaying fellow subscribers, which are tolerant of that by design.
+// Monotonic clock so the debounce is immune to NTP/TZ clock jumps.
+#define SETTINGS_SAVE_DEBOUNCE_US (10LL * 1000000)  // 10 seconds
+static int64_t s_save_deadline_us = 0;   // 0 = no save pending
+static portMUX_TYPE s_save_mux = portMUX_INITIALIZER_UNLOCKED;
 // Forward declarations for internal JSON IO
 static bool settings_write_json(void);
 static bool settings_read_json(void);
-static void save_timer_cb(TimerHandle_t xTimer)
-{
-    (void)xTimer;
-    (void)settings_write_json();
-}
 static void schedule_save(void)
 {
-    const TickType_t delay_ticks = pdMS_TO_TICKS(10000); // 10 seconds
-    if (!s_save_timer) {
-        s_save_timer = xTimerCreate("settings_save", delay_ticks, pdFALSE, NULL, save_timer_cb);
-    }
-    if (!s_save_timer) return;
-    // Restart (or start) timer with 10s
-    (void)xTimerStop(s_save_timer, 0);
-    (void)xTimerChangePeriod(s_save_timer, delay_ticks, 0);
-    (void)xTimerStart(s_save_timer, 0);
+    portENTER_CRITICAL(&s_save_mux);
+    s_save_deadline_us = esp_timer_get_time() + SETTINGS_SAVE_DEBOUNCE_US;
+    portEXIT_CRITICAL(&s_save_mux);
+}
+// task_coordinator subscriber (registered in settings_init, pre-task_coord_start).
+static void settings_save_cb(void *user)
+{
+    (void)user;
+    portENTER_CRITICAL(&s_save_mux);
+    bool due = (s_save_deadline_us != 0) &&
+               (esp_timer_get_time() >= s_save_deadline_us);
+    if (due) s_save_deadline_us = 0;
+    portEXIT_CRITICAL(&s_save_mux);
+    if (due) (void)settings_write_json();
 }
 
 #define SETTINGS_PARTITION "storage"
 #define SETTINGS_FILE      "/spiffs/settings.json"
+#define SETTINGS_TMP_FILE  "/spiffs/settings.tmp"   // atomic-commit staging file
+
+// fsync(2) is implemented by the SPIFFS VFS layer but esp-idf's bundled
+// <unistd.h> doesn't declare it for this target (same situation as
+// sd_logger.c) — declare it so the pre-commit flush below is real.
+extern int fsync(int fd);
 
 static bool settings_mount_spiffs(void)
 {
@@ -173,7 +194,26 @@ static cJSON *settings_to_json(void)
     cJSON_AddNumberToObject(root, "alarm_hour", (double)alarm_hour);
     cJSON_AddNumberToObject(root, "alarm_min", (double)alarm_min);
     cJSON_AddBoolToObject(root, "alarm_enabled", alarm_enabled);
+    cJSON_AddBoolToObject(root, "step_counter_enabled", step_counter_enabled);
     cJSON_AddNumberToObject(root, "alarm_timeout_min", (double)alarm_timeout_min);
+    // Step statistics — mirrored here daily by step_tracker; rides the SD backup.
+    cJSON *steps = cJSON_CreateObject();
+    if (steps) {
+        cJSON_AddNumberToObject(steps, "magic",     (double)step_stats.magic);
+        cJSON_AddNumberToObject(steps, "lifetime",  (double)step_stats.lifetime);
+        cJSON_AddNumberToObject(steps, "today",     (double)step_stats.today);
+        cJSON_AddNumberToObject(steps, "today_day", (double)step_stats.today_day);
+        cJSON_AddNumberToObject(steps, "best_day",  (double)step_stats.best_day);
+        cJSON_AddNumberToObject(steps, "best_week", (double)step_stats.best_week);
+        cJSON_AddNumberToObject(steps, "hist_head", (double)step_stats.hist_head);
+        cJSON *hd = cJSON_AddArrayToObject(steps, "hist_day");
+        cJSON *hs = cJSON_AddArrayToObject(steps, "hist_steps");
+        for (int i = 0; hd && hs && i < STEP_HIST_DAYS; i++) {
+            cJSON_AddItemToArray(hd, cJSON_CreateNumber((double)step_stats.hist_day[i]));
+            cJSON_AddItemToArray(hs, cJSON_CreateNumber((double)step_stats.hist_steps[i]));
+        }
+        cJSON_AddItemToObject(root, "steps", steps);
+    }
     return root;
 }
 
@@ -250,8 +290,31 @@ static bool settings_from_json(cJSON *root)
     if (cJSON_IsNumber(j)) { double v = j->valuedouble; alarm_min = (v < 0) ? 0 : (v > 59) ? 59 : (int)v; }
     j = cJSON_GetObjectItem(root, "alarm_enabled");
     if (cJSON_IsBool(j)) alarm_enabled = cJSON_IsTrue(j);
+    j = cJSON_GetObjectItem(root, "step_counter_enabled");
+    if (cJSON_IsBool(j)) step_counter_enabled = cJSON_IsTrue(j);
     j = cJSON_GetObjectItem(root, "alarm_timeout_min");
     if (cJSON_IsNumber(j)) { double v = j->valuedouble; alarm_timeout_min = (v < 1) ? 1 : (v > 30) ? 30 : (int)v; }
+    cJSON *steps = cJSON_GetObjectItem(root, "steps");
+    if (cJSON_IsObject(steps)) {
+        cJSON *s;
+        s = cJSON_GetObjectItem(steps, "magic");     if (cJSON_IsNumber(s)) step_stats.magic     = (uint32_t)s->valuedouble;
+        s = cJSON_GetObjectItem(steps, "lifetime");  if (cJSON_IsNumber(s)) step_stats.lifetime  = (uint32_t)s->valuedouble;
+        s = cJSON_GetObjectItem(steps, "today");     if (cJSON_IsNumber(s)) step_stats.today     = (uint32_t)s->valuedouble;
+        s = cJSON_GetObjectItem(steps, "today_day"); if (cJSON_IsNumber(s)) step_stats.today_day = (int32_t)s->valuedouble;
+        s = cJSON_GetObjectItem(steps, "best_day");  if (cJSON_IsNumber(s)) step_stats.best_day  = (uint32_t)s->valuedouble;
+        s = cJSON_GetObjectItem(steps, "best_week"); if (cJSON_IsNumber(s)) step_stats.best_week = (uint32_t)s->valuedouble;
+        s = cJSON_GetObjectItem(steps, "hist_head"); if (cJSON_IsNumber(s)) step_stats.hist_head = (uint8_t)((uint32_t)s->valuedouble % STEP_HIST_DAYS);
+        cJSON *hd = cJSON_GetObjectItem(steps, "hist_day");
+        cJSON *hs = cJSON_GetObjectItem(steps, "hist_steps");
+        if (cJSON_IsArray(hd) && cJSON_IsArray(hs)) {
+            for (int i = 0; i < STEP_HIST_DAYS; i++) {
+                cJSON *d  = cJSON_GetArrayItem(hd, i);
+                cJSON *st = cJSON_GetArrayItem(hs, i);
+                if (cJSON_IsNumber(d))  step_stats.hist_day[i]   = (int32_t)d->valuedouble;
+                if (cJSON_IsNumber(st)) step_stats.hist_steps[i] = (uint32_t)st->valuedouble;
+            }
+        }
+    }
     cJSON_Delete(root);
     // Apply to hardware where relevant
     bsp_display_brightness_set(brightness);
@@ -259,6 +322,17 @@ static bool settings_from_json(cJSON *root)
     return true;
 }
 
+// Atomic save: stage the full JSON into settings.tmp, fsync, then commit by
+// remove(json) + rename(tmp→json) — SPIFFS rename refuses to overwrite, hence
+// the remove first. A direct fopen(SETTINGS_FILE, "w") would truncate-then-
+// write: a power cut mid-write lost ALL settings. Crash-window recovery lives
+// in settings_read_json():
+//   - mid-tmp-write:            json intact, tmp partial  → tmp deleted, json loads
+//   - post-tmp, pre-remove:     both complete             → json loads (lose ≤1
+//                               debounced save — acceptable)
+//   - post-remove, pre-rename:  only tmp, complete (we only reach remove after
+//                               the verified full write)  → tmp promoted to json
+//   - post-rename:              json is the new version
 static bool settings_write_json(void)
 {
     if (!settings_mount_spiffs()) return false;
@@ -269,21 +343,32 @@ static bool settings_write_json(void)
     cJSON_Delete(root);
     if (!json_str) return false;
 
-    FILE *f = fopen(SETTINGS_FILE, "w");
+    FILE *f = fopen(SETTINGS_TMP_FILE, "w");
     if (!f) {
-        ESP_LOGE(TAG, "Failed to open %s for write", SETTINGS_FILE);
+        ESP_LOGE(TAG, "Failed to open %s for write", SETTINGS_TMP_FILE);
         cJSON_free(json_str);
         return false;
     }
     size_t expected = strlen(json_str);
     size_t n = fwrite(json_str, 1, expected, f);
+    if (n == expected) {
+        fflush(f);
+        fsync(fileno(f));
+    }
     fclose(f);
     cJSON_free(json_str);
     if (n != expected) {
-        ESP_LOGE(TAG, "Partial write to %s (%u/%u bytes) — removing corrupt file",
-                 SETTINGS_FILE, (unsigned)n, (unsigned)expected);
-        remove(SETTINGS_FILE);
+        ESP_LOGE(TAG, "Partial write to %s (%u/%u bytes) — removing staging file",
+                 SETTINGS_TMP_FILE, (unsigned)n, (unsigned)expected);
+        remove(SETTINGS_TMP_FILE);
         return false;
+    }
+
+    // Commit. The staging file is now complete and flushed.
+    remove(SETTINGS_FILE);   // SPIFFS rename won't overwrite an existing target
+    if (rename(SETTINGS_TMP_FILE, SETTINGS_FILE) != 0) {
+        ESP_LOGE(TAG, "Commit rename failed — settings remain in %s", SETTINGS_TMP_FILE);
+        return false;        // read-side recovery will promote the tmp at next boot
     }
     ESP_LOGI(TAG, "Settings saved to %s", SETTINGS_FILE);
     return true;
@@ -293,6 +378,21 @@ static bool settings_read_json(void)
 {
     if (!settings_mount_spiffs()) return false;
     struct stat st;
+    // Crash recovery for the atomic-save commit (see settings_write_json):
+    // json missing + tmp present means we died between remove and rename —
+    // the tmp is a verified-complete save, so finish the commit. If json
+    // EXISTS alongside a stray tmp, the tmp may be a partial write (died
+    // mid-staging) — discard it and trust the last committed json.
+    struct stat st_tmp;
+    bool tmp_exists = (stat(SETTINGS_TMP_FILE, &st_tmp) == 0);
+    if (tmp_exists) {
+        if (stat(SETTINGS_FILE, &st) != 0 && st_tmp.st_size > 0) {
+            ESP_LOGW(TAG, "Recovering interrupted settings commit from %s", SETTINGS_TMP_FILE);
+            (void)rename(SETTINGS_TMP_FILE, SETTINGS_FILE);
+        } else {
+            remove(SETTINGS_TMP_FILE);
+        }
+    }
     if (stat(SETTINGS_FILE, &st) != 0 || st.st_size <= 0) {
         ESP_LOGW(TAG, "Settings file not found; using defaults");
         return false;
@@ -427,6 +527,13 @@ void settings_init(void) {
     // during boot uses the right TZ.
     apply_tz();
 
+    // Debounced-save flusher (see schedule_save). Pre-start subscription:
+    // settings_init runs in app_main after power_manager_init (task_coord_init)
+    // and before task_coord_start. Runs display-off too — a change made just
+    // before the screen sleeps must still hit flash.
+    task_coord_subscribe("settings_save", settings_save_cb, NULL,
+                         /*on*/ 1000, /*off*/ 2000);
+
     // Start RTC first — this reads from chip and falls back to NVS if the
     // chip lost power. The default-time check below only fires if neither
     // the chip nor NVS had a valid time.
@@ -538,6 +645,30 @@ bool settings_get_alarm_enabled(void)
     return alarm_enabled;
 }
 
+void settings_set_step_counter_enabled(bool enabled)
+{
+    if (step_counter_enabled == enabled) return;
+    step_counter_enabled = enabled;
+    schedule_save();
+}
+
+bool settings_get_step_counter_enabled(void)
+{
+    return step_counter_enabled;
+}
+
+void settings_set_step_stats(const step_stats_t *stats)
+{
+    if (!stats) return;
+    step_stats = *stats;
+    schedule_save();   // debounced — step_tracker only calls this once per day
+}
+
+void settings_get_step_stats(step_stats_t *out)
+{
+    if (out) *out = step_stats;
+}
+
 void settings_set_alarm_timeout_min(int minutes)
 {
     alarm_timeout_min = (minutes < 1) ? 1 : (minutes > 30) ? 30 : minutes;
@@ -633,6 +764,8 @@ static void apply_defaults(void)
     alarm_min = DEFAULT_ALARM_MIN;
     alarm_enabled = DEFAULT_ALARM_ENABLED;
     alarm_timeout_min = DEFAULT_ALARM_TIMEOUT_MIN;
+    step_counter_enabled = DEFAULT_STEP_COUNTER_ENABLED;
+    memset(&step_stats, 0, sizeof(step_stats));   // factory reset clears step history
 }
 
 bool settings_reset_defaults(void)

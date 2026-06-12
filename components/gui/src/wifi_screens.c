@@ -214,8 +214,9 @@ static void do_connected_update(void *arg)
 {
     scan_ctx_t *ctx = (scan_ctx_t*)arg;
     if (!lv_obj_is_valid(ctx->screen)) return;
-    lv_label_set_text_fmt(ctx->status_label, "Connected: %s",
-                          wifi_manager_connected_ssid());
+    char ssid[WIFI_MANAGER_MAX_SSID_LEN];
+    wifi_manager_get_connected_ssid(ssid, sizeof(ssid));
+    lv_label_set_text_fmt(ctx->status_label, "Connected: %s", ssid);
 }
 
 static void on_scan_done(void *handler_arg, esp_event_base_t base,

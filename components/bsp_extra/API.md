@@ -89,4 +89,7 @@ const char *rtc_get_weekday_string(void);
 const char *rtc_get_weekday_short_string(void);
 const char *rtc_get_month_string(void);
 ```
-Return fields from the cached `struct tm`. Call `rtc_refresh_now()` first to ensure fresh values.
+Return fields from the cached `struct tm`. The cache is always **local civil
+time** (every writer stores `localtime_r` of the system clock); the UTC truth
+lives in the system clock itself, which is what the NVS checkpoint paths save.
+Call `rtc_refresh_now()` first to ensure fresh values.

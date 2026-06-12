@@ -5,8 +5,9 @@
 // Producer side (the esp_log_set_vprintf hook, called from whichever task is
 // logging — LVGL, WiFi, etc.) must never block: it formats the line and
 // hands it to a stream buffer with a zero timeout, dropping it on overflow.
-// A single low-priority writer task drains the buffer and is the only thing
-// that ever touches the file/SD card.
+// Sends are serialized by a short-timeout mutex (stream buffers allow only a
+// single writer; see s_send_lock). A single low-priority writer task drains
+// the buffer and is the only thing that ever touches the file/SD card.
 //
 // The hook also must not grow the CALLING task's stack by much: it runs on
 // whichever task is logging, including small system-internal tasks sized for
@@ -56,6 +57,15 @@ static const char *TAG = "SD_LOG";
 static FILE *s_log_file = NULL;
 static StreamBufferHandle_t s_stream = NULL;
 static vprintf_like_t s_orig_vprintf = NULL;
+// FreeRTOS stream buffers support exactly ONE writer; this hook runs on
+// whichever task is logging, so concurrent ESP_LOGs from two tasks would both
+// call xStreamBufferSend at once and can corrupt the buffer's internal state.
+// s_send_lock serializes the senders. Short bounded take keeps the "never
+// block the caller" contract — on contention timeout the line is dropped from
+// the FILE only (UART still prints it), same policy as a full buffer. Created
+// in sd_logger_init() before the hook is installed. (The writer task is the
+// buffer's only READER, so that side stays single by construction.)
+static SemaphoreHandle_t s_send_lock = NULL;
 
 // ── vprintf hook — runs on the caller's task, must be O(memcpy) ─────────────
 
@@ -78,8 +88,12 @@ static int sd_log_vprintf(const char *fmt, va_list args)
             size_t n = (size_t)len < SD_LOG_LINE_MAX ? (size_t)len : SD_LOG_LINE_MAX - 1;
             // Zero timeout: a full buffer means the writer can't keep up —
             // drop this line from the file (UART still gets it via the call
-            // below) rather than ever stalling the caller.
-            xStreamBufferSend(s_stream, buf, n, 0);
+            // below) rather than ever stalling the caller. The send itself is
+            // serialized (see s_send_lock): stream buffers are single-writer.
+            if (xSemaphoreTake(s_send_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+                xStreamBufferSend(s_stream, buf, n, 0);
+                xSemaphoreGive(s_send_lock);
+            }
         }
         free(buf);
     }
@@ -91,24 +105,51 @@ static int sd_log_vprintf(const char *fmt, va_list args)
 
 // ── writer task — the only thing that touches the file/SD card ──────────────
 
+// Consecutive write/flush failures before giving up on the card (a yanked SD
+// fails every operation; transient FATFS hiccups recover well under this).
+#define SD_LOG_MAX_CONSEC_FAILS 3
+
 static void sd_log_writer_task(void *arg)
 {
     (void)arg;
     uint8_t chunk[SD_LOG_LINE_MAX];
     size_t pending = 0;
+    int    fails   = 0;
 
     for (;;) {
         size_t n = xStreamBufferReceive(s_stream, chunk, sizeof(chunk), pdMS_TO_TICKS(1000));
         if (n > 0) {
-            fwrite(chunk, 1, n, s_log_file);
-            pending += n;
+            if (fwrite(chunk, 1, n, s_log_file) != n) fails++;
+            else                                      pending += n;
         }
         // Flush on a size threshold and whenever the buffer goes idle, so a
-        // crash loses at most a fraction of a second of log.
+        // crash loses at most a fraction of a second of log. stdio buffers
+        // writes, so a pulled card often only surfaces here — count flush
+        // failures the same as short writes.
         if (pending >= SD_LOG_FLUSH_THRESHOLD || (pending > 0 && n == 0)) {
-            fflush(s_log_file);
-            fsync(fileno(s_log_file));
+            if (fflush(s_log_file) != 0 || fsync(fileno(s_log_file)) < 0) fails++;
+            else                                                          fails = 0;
             pending = 0;
+        }
+
+        // Card gone (or FATFS wedged): stop pretending. Without this, capture
+        // failed silently forever while every ESP_LOG in the system kept
+        // paying the hook's malloc+format cost for lines that went nowhere.
+        if (fails >= SD_LOG_MAX_CONSEC_FAILS) {
+            // Detach the hook FIRST so new log calls go straight to the
+            // original vprintf (the warning below then prints clean to UART).
+            (void)esp_log_set_vprintf(s_orig_vprintf);
+            ESP_LOGW(TAG, "SD log writes failing repeatedly (card removed?) — "
+                          "file logging disabled for this session");
+            fclose(s_log_file);
+            s_log_file = NULL;
+            sd_manager_release();
+            // Deliberately LEAK s_stream and s_send_lock: another task may be
+            // inside the (now-detached) hook mid-send right now — freeing
+            // them under it would be a use-after-free. One-time ~8 KB cost on
+            // a card-failure path. WithCaps delete: this task's stack is in
+            // PSRAM (created via xTaskCreateWithCaps).
+            vTaskDeleteWithCaps(NULL);
         }
     }
 }
@@ -191,12 +232,25 @@ void sd_logger_init(void)
         return;
     }
 
+    s_send_lock = xSemaphoreCreateMutex();
+    if (!s_send_lock) {
+        ESP_LOGW(TAG, "Could not allocate log send lock — file logging disabled");
+        vStreamBufferDelete(s_stream);
+        s_stream = NULL;
+        fclose(s_log_file);
+        s_log_file = NULL;
+        sd_manager_release();
+        return;
+    }
+
     // SPIRAM stack: this task writes only to the SD card (FATFS), which does not
     // disable the flash cache — so it's safe off internal RAM. (No NVS/SPIFFS.)
     if (xTaskCreateWithCaps(sd_log_writer_task, "sd_log_writer", 3072, NULL,
                             tskIDLE_PRIORITY + 1, NULL,
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         ESP_LOGW(TAG, "Could not start log writer task — file logging disabled");
+        vSemaphoreDelete(s_send_lock);
+        s_send_lock = NULL;
         vStreamBufferDelete(s_stream);
         s_stream = NULL;
         fclose(s_log_file);

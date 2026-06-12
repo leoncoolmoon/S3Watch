@@ -154,8 +154,19 @@ void audio_manager_close(am_client_t client)
 
 int audio_manager_write(const void *data, int len)
 {
-    if (!s_open || !s_spk) return 0;
-    return esp_codec_dev_write(s_spk, (void *)data, len);
+    // Serialized with open/close/suspend: an unlocked check-then-write let a
+    // concurrent close (PM suspend on the coordinator, or a NOTIFY preempt)
+    // run esp_codec_dev_close() mid-esp_codec_dev_write() — the codec-dev
+    // layer isn't safe against that. Holding s_mutex across the write means
+    // close/open can wait up to one I2S DMA period (~33 ms) for an in-flight
+    // chunk — bounded and harmless (close already sleeps 10 ms by design).
+    // No circular wait: the write only blocks on DMA room, which the I2S
+    // hardware drains regardless of who holds s_mutex.
+    if (!s_mutex) return 0;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    int n = (s_open && s_spk) ? esp_codec_dev_write(s_spk, (void *)data, len) : 0;
+    xSemaphoreGive(s_mutex);
+    return n;
 }
 
 void audio_manager_set_volume(int vol)
@@ -163,12 +174,18 @@ void audio_manager_set_volume(int vol)
     if (vol < 0)   vol = 0;
     if (vol > 100) vol = 100;
     s_volume = vol;
+    if (!s_mutex) return;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     if (s_spk) esp_codec_dev_set_out_vol(s_spk, vol);
+    xSemaphoreGive(s_mutex);
 }
 
 void audio_manager_mute(bool mute)
 {
+    if (!s_mutex) return;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     if (s_spk) esp_codec_dev_set_out_mute(s_spk, mute);
+    xSemaphoreGive(s_mutex);
 }
 
 bool audio_manager_is_open(void)

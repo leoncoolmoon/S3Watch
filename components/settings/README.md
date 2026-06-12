@@ -6,6 +6,15 @@ NVS-persisted user preferences. Single source of truth for all user-configurable
 
 Settings are serialised to a JSON file on SPIFFS (`/spiffs/settings.json`). NVS is not used — the SPIFFS JSON approach allows easy inspection and backup to SD card.
 
+**Saves are debounced and atomic.** `schedule_save()` pushes a 10 s deadline
+(monotonic clock); the `settings_save` task_coordinator subscriber performs the
+write once it passes — the SPIFFS write runs on the coordinator task, never the
+FreeRTOS timer-service task (a SPIFFS GC pause there stalled every software
+timer). The write itself is crash-safe: staged to `/spiffs/settings.tmp`,
+fsync'd, then committed via remove+rename; `settings_read_json()` recovers every
+crash window (a complete orphaned `.tmp` is promoted, a partial one discarded) —
+a power cut can lose at most the last debounced change, never the whole file.
+
 ## Backup / restore
 
 `settings_backup_to_sd()` writes a snapshot to the SD card root. `settings_restore_from_sd()` applies it field-by-field — missing fields keep their current value, so a partial or older backup is safe to restore. The backup also includes the WiFi network list (exported via `wifi_manager_export_networks()`).

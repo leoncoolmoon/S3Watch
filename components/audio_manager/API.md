@@ -44,7 +44,10 @@ Mute → 10 ms settle → close → release PM lock and ALDO rail. For `AM_CLIEN
 ```c
 int audio_manager_write(const void *data, int len);
 ```
-Pass-through to `esp_codec_dev_write()`. Returns bytes written, or 0 if the codec is not open.
+Pass-through to `esp_codec_dev_write()`. Returns bytes written, or 0 if the codec
+is not open. Serialized with open/close/suspend under the internal mutex, so a
+concurrent close can never land mid-write; the cost is that close/open may wait
+up to one I2S DMA period (~33 ms) for an in-flight chunk.
 
 ---
 

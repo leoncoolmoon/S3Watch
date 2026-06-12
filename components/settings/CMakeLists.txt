@@ -4,5 +4,5 @@ idf_component_register(
 
     INCLUDE_DIRS "include"
     REQUIRES esp32_s3_touch_amoled_2_06 bsp_extra spiffs json
-    PRIV_REQUIRES wifi_manager sd_manager
+    PRIV_REQUIRES wifi_manager sd_manager task_coordinator esp_timer
 )

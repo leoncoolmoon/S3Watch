@@ -6,6 +6,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "sdkconfig.h"
 #if CONFIG_PM_ENABLE
 #include "esp_pm.h"
@@ -13,7 +14,32 @@
 
 static const char *TAG = "POWER_MGR";
 
+// ── locking ────────────────────────────────────────────────────────────────
+// Two mutexes, strict order: s_transition_mutex → s_ref_mutex → (BSP/AXP).
+//
+// s_transition_mutex serializes the whole request_sleep()/request_wake()
+// sequences. Today every transition initiator happens to run on the
+// task_coordinator task, but the API is public (display_manager_turn_on/off
+// wrap it) and one new caller on another task would interleave the display
+// op sequences — so the check-then-act on s_awake is serialized here. Locks
+// taken INSIDE a transition (LVGL port lock, signalk lifecycle mux) are all
+// bounded-timeout, so there is no unbounded inversion against this mutex.
+//
+// s_ref_mutex guards both refcount families (s_rail_refcount[],
+// s_no_sleep_refcount) TOGETHER WITH their edge actions (rail toggle /
+// esp_pm acquire-release). Refcounts are mutated from genuinely concurrent
+// tasks today (audio tasks via audio_manager open/close vs the coordinator's
+// display sleep/wake). Keeping the edge action inside the lock is what
+// guarantees the hardware state always matches the settled refcount —
+// deciding the edge under the lock but toggling outside would let an
+// enable/disable pair land in reversed order. Hold time is one short I2C
+// transaction worst-case. Never call back into power_manager from under it.
+static SemaphoreHandle_t s_transition_mutex = NULL;
+static SemaphoreHandle_t s_ref_mutex        = NULL;
+
 // ── awake/sleep state ──────────────────────────────────────────────────────
+// volatile: read lock-free by power_manager_is_awake() (task_coordinator's
+// active_fn and others); written only under s_transition_mutex.
 static volatile bool s_awake = true;  // system starts awake (boot is awake)
 
 bool power_manager_is_awake(void) { return s_awake; }
@@ -108,6 +134,7 @@ void power_manager_rail_hold(pm_rail_client_t client)
     const bsp_power_rail_t *rails;
     size_t count;
     client_rails(client, &rails, &count);
+    if (s_ref_mutex) xSemaphoreTake(s_ref_mutex, portMAX_DELAY);
     for (size_t i = 0; i < count; i++) {
         if (s_rail_refcount[rails[i]]++ == 0) {
             bsp_power_rail_enable(rails[i], true);
@@ -115,6 +142,7 @@ void power_manager_rail_hold(pm_rail_client_t client)
                      (int)(rails[i] - BSP_POWER_RAIL_ALDO1 + 1), rail_client_name(client));
         }
     }
+    if (s_ref_mutex) xSemaphoreGive(s_ref_mutex);
 }
 
 void power_manager_rail_release(pm_rail_client_t client)
@@ -122,6 +150,7 @@ void power_manager_rail_release(pm_rail_client_t client)
     const bsp_power_rail_t *rails;
     size_t count;
     client_rails(client, &rails, &count);
+    if (s_ref_mutex) xSemaphoreTake(s_ref_mutex, portMAX_DELAY);
     for (size_t i = 0; i < count; i++) {
         if (s_rail_refcount[rails[i]] > 0 && --s_rail_refcount[rails[i]] == 0) {
             bsp_power_rail_enable(rails[i], false);
@@ -129,6 +158,7 @@ void power_manager_rail_release(pm_rail_client_t client)
                      (int)(rails[i] - BSP_POWER_RAIL_ALDO1 + 1), rail_client_name(client));
         }
     }
+    if (s_ref_mutex) xSemaphoreGive(s_ref_mutex);
 }
 
 // Read the ACTUAL AXP2101 LDO enable bits back (not our refcounts) so the gating
@@ -152,22 +182,26 @@ static int                  s_no_sleep_refcount = 0;
 void power_manager_no_sleep_hold(void)
 {
 #if CONFIG_PM_ENABLE
+    if (s_ref_mutex) xSemaphoreTake(s_ref_mutex, portMAX_DELAY);
     s_no_sleep_refcount++;
     if (s_no_sleep_refcount == 1 && s_no_sleep_lock) {
         (void)esp_pm_lock_acquire(s_no_sleep_lock);
     }
+    if (s_ref_mutex) xSemaphoreGive(s_ref_mutex);
 #endif
 }
 
 void power_manager_no_sleep_release(void)
 {
 #if CONFIG_PM_ENABLE
+    if (s_ref_mutex) xSemaphoreTake(s_ref_mutex, portMAX_DELAY);
     if (s_no_sleep_refcount > 0) {
         s_no_sleep_refcount--;
         if (s_no_sleep_refcount == 0 && s_no_sleep_lock) {
             (void)esp_pm_lock_release(s_no_sleep_lock);
         }
     }
+    if (s_ref_mutex) xSemaphoreGive(s_ref_mutex);
 #endif
 }
 
@@ -175,7 +209,14 @@ void power_manager_no_sleep_release(void)
 
 void power_manager_request_sleep(void)
 {
-    if (!s_awake) return;
+    // Serialize against a concurrent wake/sleep from another task: the
+    // check-then-act on s_awake and the multi-step sequence below must not
+    // interleave with request_wake()'s (display ops would corrupt).
+    if (s_transition_mutex) xSemaphoreTake(s_transition_mutex, portMAX_DELAY);
+    if (!s_awake) {
+        if (s_transition_mutex) xSemaphoreGive(s_transition_mutex);
+        return;
+    }
     s_awake = false;
     ESP_LOGI(TAG, "sleep");
 
@@ -195,11 +236,17 @@ void power_manager_request_sleep(void)
 
     // 4. Release the "system awake" no-sleep lock.
     power_manager_no_sleep_release();
+
+    if (s_transition_mutex) xSemaphoreGive(s_transition_mutex);
 }
 
 void power_manager_request_wake(pm_wake_src_t source)
 {
-    if (s_awake) return;
+    if (s_transition_mutex) xSemaphoreTake(s_transition_mutex, portMAX_DELAY);
+    if (s_awake) {
+        if (s_transition_mutex) xSemaphoreGive(s_transition_mutex);
+        return;
+    }
     s_awake = true;
     ESP_LOGI(TAG, "wake (src=%d)", (int)source);
 
@@ -216,6 +263,8 @@ void power_manager_request_wake(pm_wake_src_t source)
 
     // 4. Notify all listeners that the system is awake.
     fire_event(PM_EVT_WOKE_UP);
+
+    if (s_transition_mutex) xSemaphoreGive(s_transition_mutex);
 }
 
 // ── task_coordinator subscribers ──────────────────────────────────────────
@@ -260,6 +309,11 @@ static void batt_telemetry_cb(void *user)
 
 void power_manager_init(void)
 {
+    // Locks first — power_manager_rail_hold below is already a user, and
+    // audio_manager_init (next in app_main) takes the AUDIO rail.
+    if (!s_transition_mutex) s_transition_mutex = xSemaphoreCreateMutex();
+    if (!s_ref_mutex)        s_ref_mutex        = xSemaphoreCreateMutex();
+
     // Tell BSP to never gate ALDOs inside bsp_display_sleep() — power_manager is
     // the sole owner of every ALDO rail and drives them via the consumer locks.
     bsp_display_keep_aldo_alive(true);

@@ -59,9 +59,16 @@ esp_err_t wifi_manager_forget(const char *ssid);
 cJSON *wifi_manager_export_networks(void);
 bool   wifi_manager_import_networks(const cJSON *arr);
 
+// Lock-free snapshot (volatile bool read; state writes are serialized
+// internally).
 bool        wifi_manager_is_connected(void);
-const char *wifi_manager_connected_ssid(void);
-int8_t      wifi_manager_connected_rssi(void);
+
+// Copy the connected SSID into buf (always NUL-terminated; empty when not
+// connected). Snapshot taken under the internal lock. Replaces the old
+// pointer-returning connected_ssid() getter, which let callers read the
+// buffer while the event task was mid-rewrite (connected_rssi() had no
+// callers at all and was removed).
+void        wifi_manager_get_connected_ssid(char *buf, size_t len);
 
 // Power control — call release() after NTP sync to stop the radio.
 // Call wake() before scanning or connecting again.

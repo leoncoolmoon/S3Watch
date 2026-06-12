@@ -15,6 +15,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "lvgl.h"
 #include "lvgl_spiffs_fs.h"
 #include "watchface.h"
@@ -24,7 +25,10 @@ static const char* TAG = "UI";
 static void create_main_screen(void) {
   swatch_tileview();
   vTaskDelay(pdMS_TO_TICKS(100));
-  load_screen(NULL, get_main_screen(), LV_SCR_LOAD_ANIM_NONE);
+  // Deliberately NOT loaded here: the boot splash stays the active screen
+  // while the tileview is built behind it. boot_manager performs the
+  // splash→watchface handoff (boot_splash_handoff) once the boot tone and
+  // this build have both finished.
 }
 
 void ui_init(void) {
@@ -49,7 +53,9 @@ void ui_init(void) {
 }
 
 void ui_task(void* pvParameters) {
-  (void)pvParameters;
+  // Optional ready semaphore from boot_manager — given once the tileview is
+  // built and all UI plumbing is live, so the splash handoff can proceed.
+  SemaphoreHandle_t ready = (SemaphoreHandle_t)pvParameters;
   ESP_LOGI(TAG, "UI task started");
 
   ui_init();
@@ -58,5 +64,6 @@ void ui_task(void* pvParameters) {
   ui_power_events_start();
   ui_back_button_start();
 
+  if (ready) xSemaphoreGive(ready);
   vTaskDelete(NULL);
 }

@@ -37,6 +37,10 @@ extern "C" {
     void ui_open_music_app(void);
 
     void ui_init(void);
+    // pvParameters: optional SemaphoreHandle_t, given once the tileview is
+    // built and the UI plumbing is live (boot_manager blocks the boot-splash
+    // handoff on it). The built main screen is NOT auto-loaded — the boot
+    // splash stays active until boot_splash_handoff(). Task self-deletes.
     void ui_task(void* pvParameters);
 
     // Accessor for the main style

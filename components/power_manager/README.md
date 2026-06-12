@@ -12,6 +12,23 @@ Central coordinator for system sleep/wake, ESP-IDF PM locks, and AXP2101 ALDO ra
 - **Battery power telemetry** — a 60 s `task_coordinator` subscriber logs `PWRLOG up=<s> awake=<0/1> soc=<%> vbat=<mV> aldo=<1234>` **when on battery** (skipped on USB). The AXP2101 has no current ADC, so power is measured from SOC%/VBAT drain over time; `sd_logger` mirrors the lines to `/sdcard/logs/` when SD logging is enabled. See `doc/power-rails.md` → "Measuring battery power".
 - Configures `esp_pm_configure` (DFS + tickless idle) and initialises `task_coordinator`.
 
+## Thread-safety
+
+All public entry points are safe from any task. Two internal mutexes, strict
+order `transition → ref → BSP/AXP`:
+
+- **Transition mutex** serializes the whole `request_sleep()`/`request_wake()`
+  sequences (the `s_awake` check-then-act plus the multi-step display/listener
+  choreography). Locks taken *inside* a transition (LVGL port lock, signalk
+  lifecycle mutex) are all bounded-timeout, so nothing can wedge it.
+- **Ref mutex** guards both refcount families (`s_rail_refcount[]`,
+  `s_no_sleep_refcount`) **together with their edge actions** (rail toggle /
+  `esp_pm` acquire-release), so the hardware state always matches the settled
+  refcount even when audio tasks and the coordinator race hold/release. Never
+  call back into power_manager from code that could run under it.
+
+`power_manager_is_awake()` is a lock-free `volatile` read (snapshot semantics).
+
 ## ALDO rail mapping
 
 From the board schematic (`bsp/doc/power-rails.md`):

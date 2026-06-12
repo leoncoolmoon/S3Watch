@@ -22,7 +22,7 @@ Controls the operating mode of the FT3168 capacitive touch IC:
 `display_manager` sets Monitor mode during idle and restores Active on wake. Sleep mode is intentionally avoided because RESETB is shared with the LCD reset line.
 
 ### PCF85063A RTC (`rtc_lib.h`)
-UTC-based RTC access. `rtc_start()` loads time from the PCF85063A into `settimeofday()` at boot. `rtc_minute_sync()` checkpoints the internal clock back to the RTC once per minute (wired as a task_coordinator subscriber) to bound time-loss on power failure.
+UTC-based RTC access. `rtc_start()` loads time from the PCF85063A into `settimeofday()` at boot. `rtc_minute_sync()` re-syncs the system clock *from* the PCF85063A once per minute (task_coordinator subscriber, display-on) and checkpoints the epoch to NVS, bounding time-loss on power failure to ~1 minute. All NVS checkpoints save the **system clock** (UTC by definition) — never the `rtc_get_*` display cache, which holds local civil time.
 
 ## Dependencies
 

@@ -18,9 +18,9 @@ Play a notification sound. Tries `/spiffs/notification.mp3` via `audio_manager_p
 
 ### `audio_alert_play_startup`
 ```c
-void audio_alert_play_startup(void);
+void audio_alert_play_startup(SemaphoreHandle_t done);
 ```
-Spawn a detached task that waits 400 ms then plays `/spiffs/boot.mp3` via `audio_manager_play_mp3()`. If `boot.mp3` is absent or unreadable, falls back to `audio_alert_notify()` (notification chime). Respects `settings_get_sound()`. The boot sound and the notification chime are independent files — replacing one does not affect the other.
+Spawn a detached task that plays `/spiffs/boot.mp3` via `audio_manager_play_mp3()` (no start delay — `boot_manager` owns the timing now). If `boot.mp3` is absent or unreadable, falls back to `audio_alert_notify()` (notification chime). `done` (optional, NULL allowed) is given when playback fully finishes — and is given **immediately** when sound is disabled or the task can't spawn, so a waiter (boot_manager's splash handoff) is never left hanging. The boot sound and the notification chime are independent files — replacing one does not affect the other.
 
 ---
 

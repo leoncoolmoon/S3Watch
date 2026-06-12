@@ -55,7 +55,7 @@ idf_component_register(
         audio_alert
         signalk_client
         settings
-        sensors
+        imu_manager
         gui
         sd_manager
 
