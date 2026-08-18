@@ -1,0 +1,17 @@
+{
+  "brightness": 40,
+  "display_timeout_ms": 30000,
+  "sound_enabled": true,
+  "notify_volume": 80,
+  "step_goal": 8000,
+  "time_format_24h": true,
+  "timezone": "UTC0",
+  "wifi_enabled": false,
+  "wifi_ssid": "",
+  "wifi_pass": "",
+  "ntp_server": "pool.ntp.org",
+  "signalk_host": "192.168.1.1",
+  "signalk_port": 3000,
+  "watchface_style": 0,
+  "alarm_timeout_min": 10
+}

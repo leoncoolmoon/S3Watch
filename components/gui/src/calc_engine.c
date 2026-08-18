@@ -168,7 +168,7 @@ void calc_get_expr(char *buf, size_t n)
         fmt(s_a, a_str, sizeof(a_str));
         snprintf(buf, n, "%s %s", a_str, sym[s_op]);
     } else {
-        snprintf(buf, n, "");
+        if (n > 0) buf[0] = '\0';
     }
 }
 
