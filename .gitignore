@@ -5,3 +5,5 @@ dependencies.lock
 .claude
 AGENTS.md
 CODE_AUDIT_REPORT.md
+__pycache__/
+*.pyc
