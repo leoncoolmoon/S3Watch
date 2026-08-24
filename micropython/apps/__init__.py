@@ -1,1 +1,0 @@
-# MicroPython applications package
