@@ -1,0 +1,75 @@
+"""
+pedometer.py —— 计步器应用
+"""
+import lvgl as lv
+import driver as hw
+
+APP_INFO = {
+    "name": "Pedometer / 计步器",
+    "icon": None
+}
+
+def add_back_button(parent):
+    btn = lv.button(parent)
+    btn.set_size(70, 36)
+    btn.align(lv.ALIGN.TOP_LEFT, 10, 10)
+    btn.set_style_bg_color(lv.color_hex(0x34495E), 0)
+    lbl = lv.label(btn)
+    lbl.set_text("< Back")
+    lbl.center()
+    def on_back(e):
+        def async_back(t):
+            if t: t.delete()
+            try:
+                import main
+                main.create_main_ui()
+            except Exception as ex:
+                print(f"Back error: {ex}")
+        lv.timer_create(async_back, 10, None)
+    btn.add_event_cb(on_back, lv.EVENT.CLICKED, None)
+    return btn
+
+def run():
+    hw.init_essential()
+    scr = lv.screen_active()
+    lv.obj_clean(scr)
+    scr.set_style_bg_color(lv.color_black(), 0)
+
+    add_back_button(scr)
+
+    title = lv.label(scr)
+    title.set_text("Step Tracker")
+    title.set_style_text_font(lv.font_montserrat_20, 0)
+    title.align(lv.ALIGN.TOP_MID, 0, 15)
+
+    lbl_steps = lv.label(scr)
+    lbl_steps.set_text("0")
+    lbl_steps.set_style_text_font(lv.font_montserrat_48 if hasattr(lv, "font_montserrat_48") else lv.font_montserrat_24, 0)
+    lbl_steps.align(lv.ALIGN.CENTER, 0, -30)
+
+    lbl_unit = lv.label(scr)
+    lbl_unit.set_text("STEPS TODAY")
+    lbl_unit.set_style_text_color(lv.color_hex(0x888888), 0)
+    lbl_unit.align(lv.ALIGN.CENTER, 0, 20)
+
+    steps_cnt = 0
+
+    def update_steps(timer):
+        nonlocal steps_cnt
+        try:
+            imu = hw.get_imu()
+            ax, ay, az = imu.read_accel_g()
+            mag = (ax*ax + ay*ay + az*az)**0.5
+            if mag > 1.25:
+                steps_cnt += 1
+                lbl_steps.set_text(str(steps_cnt))
+        except Exception:
+            pass
+
+    timer = lv.timer_create(update_steps, 200, None)
+    def on_delete(e):
+        try:
+            timer.delete()
+        except Exception:
+            pass
+    scr.add_event_cb(on_delete, lv.EVENT.DELETE, None)
