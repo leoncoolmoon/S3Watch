@@ -10,6 +10,10 @@ APP_INFO = {
     "icon": None
 }
 
+def clean_obj(obj):
+    if hasattr(obj, "clean"):
+        obj.clean()
+
 class StopwatchApp:
     def __init__(self):
         self.state = "RESET" # RESET, RUNNING, PAUSED
@@ -45,7 +49,7 @@ def add_back_button(parent):
 def run():
     hw.init_essential()
     scr = lv.screen_active()
-    lv.obj_clean(scr)
+    clean_obj(scr)
     scr.set_style_bg_color(lv.color_black(), 0)
 
     add_back_button(scr)
@@ -121,7 +125,7 @@ def run():
             sw.state = "RESET"
             sw.accum_time = 0
             sw.laps.clear()
-            lv.obj_clean(lap_list)
+            clean_obj(lap_list)
             lbl_left.set_text("Start")
             btn_left.set_style_bg_color(lv.color_hex(0x27AE60), 0)
             update_ui(None)

@@ -11,6 +11,10 @@ APP_INFO = {
     "icon": None
 }
 
+def clean_obj(obj):
+    if hasattr(obj, "clean"):
+        obj.clean()
+
 def add_back_button(parent):
     btn = lv.button(parent)
     btn.set_size(70, 36)
@@ -32,7 +36,7 @@ def add_back_button(parent):
     return btn
 
 def create_watchface_tile(parent):
-    lv.obj_clean(parent)
+    clean_obj(parent)
     parent.set_style_bg_color(lv.color_black(), 0)
 
     lbl_time = lv.label(parent)

@@ -45,7 +45,8 @@ def create_main_ui():
     hw.init_essential()
 
     scr = lv.screen_active()
-    lv.obj_clean(scr)
+    if hasattr(scr, "clean"):
+        scr.clean()
     scr.set_style_bg_color(lv.color_black(), 0)
 
     # 创建 Tileview 页面

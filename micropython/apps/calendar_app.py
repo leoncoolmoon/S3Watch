@@ -9,6 +9,10 @@ APP_INFO = {
     "icon": None
 }
 
+def clean_obj(obj):
+    if hasattr(obj, "clean"):
+        obj.clean()
+
 def add_back_button(parent):
     btn = lv.button(parent)
     btn.set_size(70, 36)
@@ -18,23 +22,25 @@ def add_back_button(parent):
     lbl.set_text("< Back")
     lbl.center()
     def on_back(e):
-        try:
-            import main
-            main.create_main_ui()
-        except Exception as ex:
-            print(f"Back error: {ex}")
+        def async_back(t):
+            if t: t.delete()
+            try:
+                import main
+                main.create_main_ui()
+            except Exception as ex:
+                print(f"Back error: {ex}")
+        lv.timer_create(async_back, 10, None)
     btn.add_event_cb(on_back, lv.EVENT.CLICKED, None)
     return btn
 
 def run():
     hw.init_essential()
     scr = lv.screen_active()
-    lv.obj_clean(scr)
+    clean_obj(scr)
     scr.set_style_bg_color(lv.color_black(), 0)
 
     add_back_button(scr)
 
-    # 标题
     title = lv.label(scr)
     title.set_text("Calendar")
     title.set_style_text_font(lv.font_montserrat_20, 0)

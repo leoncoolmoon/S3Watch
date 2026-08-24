@@ -9,6 +9,10 @@ APP_INFO = {
     "icon": None
 }
 
+def clean_obj(obj):
+    if hasattr(obj, "clean"):
+        obj.clean()
+
 def add_back_button(parent):
     btn = lv.button(parent)
     btn.set_size(70, 36)
@@ -32,7 +36,7 @@ def add_back_button(parent):
 def run():
     hw.init_essential()
     scr = lv.screen_active()
-    lv.obj_clean(scr)
+    clean_obj(scr)
     scr.set_style_bg_color(lv.color_black(), 0)
 
     add_back_button(scr)
