@@ -1,9 +1,11 @@
 """
 main.py —— 手表主程序入口。
 
-初始化硬件并启动 UI TileView 框架 ( Watchface / App Picker / Settings )。
+初始化硬件并启动 UI TileView 框架 ( Watchface / App Picker / Settings )，
+并使用 while 循环保持 LVGL 界面轮询运行。
 """
 import sys
+import time
 import gc
 import os
 import lvgl as lv
@@ -119,6 +121,9 @@ def create_main_ui():
 
 def main():
     create_main_ui()
+    # 主程序运行循环，保持 UI 维持运行
+    while True:
+        time.sleep_ms(20)
 
 if __name__ == "__main__":
     main()

@@ -91,3 +91,6 @@ def run():
     scr = lv.screen_active()
     create_watchface_tile(scr)
     add_back_button(scr)
+
+if __name__ == "__main__":
+    run()
