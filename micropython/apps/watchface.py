@@ -5,6 +5,7 @@ import time
 import machine
 import lvgl as lv
 import driver as hw
+from main import get_font
 
 APP_INFO = {
     "name": "Watchface / 表盘",
@@ -40,17 +41,17 @@ def create_watchface_tile(parent):
     parent.set_style_bg_color(lv.color_black(), 0)
 
     lbl_time = lv.label(parent)
-    lbl_time.set_style_text_font(lv.font_montserrat_48 if hasattr(lv, "font_montserrat_48") else lv.font_montserrat_24, 0)
+    lbl_time.set_style_text_font(get_font("montserrat_48"), 0)
     lbl_time.set_style_text_color(lv.color_white(), 0)
     lbl_time.align(lv.ALIGN.CENTER, 0, -40)
 
     lbl_date = lv.label(parent)
-    lbl_date.set_style_text_font(lv.font_montserrat_20, 0)
+    lbl_date.set_style_text_font(get_font("montserrat_20"), 0)
     lbl_date.set_style_text_color(lv.color_hex(0xAAAAAA), 0)
     lbl_date.align(lv.ALIGN.CENTER, 0, 20)
 
     lbl_battery = lv.label(parent)
-    lbl_battery.set_style_text_font(lv.font_montserrat_16, 0)
+    lbl_battery.set_style_text_font(get_font("montserrat_16"), 0)
     lbl_battery.set_style_text_color(lv.color_hex(0x2ECC71), 0)
     lbl_battery.align(lv.ALIGN.BOTTOM_MID, 0, -60)
 

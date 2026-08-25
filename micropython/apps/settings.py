@@ -3,6 +3,7 @@ settings.py —— 设置应用
 """
 import lvgl as lv
 import driver as hw
+from main import get_font
 
 APP_INFO = {
     "name": "Settings / 设置",
@@ -43,7 +44,7 @@ def run():
 
     title = lv.label(scr)
     title.set_text("Settings")
-    title.set_style_text_font(lv.font_montserrat_20, 0)
+    title.set_style_text_font(get_font("montserrat_20"), 0)
     title.align(lv.ALIGN.TOP_MID, 0, 15)
 
     container = lv.obj(scr)
@@ -54,6 +55,7 @@ def run():
 
     lbl_b = lv.label(container)
     lbl_b.set_text("Display Brightness")
+    lbl_b.set_style_text_font(get_font("montserrat_16"), 0)
 
     slider_b = lv.slider(container)
     slider_b.set_range(10, 100)
@@ -68,6 +70,7 @@ def run():
 
     lbl_v = lv.label(container)
     lbl_v.set_text("Audio Volume")
+    lbl_v.set_style_text_font(get_font("montserrat_16"), 0)
 
     slider_v = lv.slider(container)
     slider_v.set_range(-60, 0)
@@ -83,6 +86,7 @@ def run():
     slider_v.add_event_cb(volume_cb, lv.EVENT.VALUE_CHANGED, None)
 
     lbl_p = lv.label(container)
+    lbl_p.set_style_text_font(get_font("montserrat_16"), 0)
     pwr = hw.get_power()
     try:
         pct = pwr.battery_percent

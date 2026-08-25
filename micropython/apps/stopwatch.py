@@ -4,6 +4,7 @@ stopwatch.py —— 秒表应用
 import time
 import lvgl as lv
 import driver as hw
+from main import get_font
 
 APP_INFO = {
     "name": "Stopwatch / 秒表",
@@ -58,17 +59,17 @@ def run():
 
     title = lv.label(scr)
     title.set_text("Stopwatch")
-    title.set_style_text_font(lv.font_montserrat_20, 0)
+    title.set_style_text_font(get_font("montserrat_20"), 0)
     title.align(lv.ALIGN.TOP_MID, 0, 15)
 
     lbl_main = lv.label(scr)
     lbl_main.set_text("00:00")
-    lbl_main.set_style_text_font(lv.font_montserrat_48 if hasattr(lv, "font_montserrat_48") else lv.font_montserrat_24, 0)
+    lbl_main.set_style_text_font(get_font("montserrat_48"), 0)
     lbl_main.align(lv.ALIGN.CENTER, -30, -50)
 
     lbl_frac = lv.label(scr)
     lbl_frac.set_text(".00")
-    lbl_frac.set_style_text_font(lv.font_montserrat_20, 0)
+    lbl_frac.set_style_text_font(get_font("montserrat_20"), 0)
     lbl_frac.align(lv.ALIGN.CENTER, 60, -40)
 
     lap_list = lv.obj(scr)
@@ -82,6 +83,7 @@ def run():
     btn_left.set_style_bg_color(lv.color_hex(0x27AE60), 0)
     lbl_left = lv.label(btn_left)
     lbl_left.set_text("Start")
+    lbl_left.set_style_text_font(get_font("montserrat_20"), 0)
     lbl_left.center()
 
     btn_right = lv.button(scr)
@@ -90,6 +92,7 @@ def run():
     btn_right.set_style_bg_color(lv.color_hex(0x7F8C8D), 0)
     lbl_right = lv.label(btn_right)
     lbl_right.set_text("Lap")
+    lbl_right.set_style_text_font(get_font("montserrat_20"), 0)
     lbl_right.center()
 
     def update_ui(timer):
@@ -117,6 +120,7 @@ def run():
             ms = sw.get_elapsed_ms()
             sw.laps.append(ms)
             lbl = lv.label(lap_list)
+            lbl.set_style_text_font(get_font("montserrat_16"), 0)
             cs = (ms // 10) % 100
             sec = (ms // 1000) % 60
             mn = (ms // 60000) % 100

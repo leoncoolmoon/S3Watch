@@ -3,6 +3,7 @@ calendar_app.py —— 日历应用
 """
 import lvgl as lv
 import driver as hw
+from main import get_font
 
 APP_INFO = {
     "name": "Calendar / 日历",
@@ -43,7 +44,7 @@ def run():
 
     title = lv.label(scr)
     title.set_text("Calendar")
-    title.set_style_text_font(lv.font_montserrat_20, 0)
+    title.set_style_text_font(get_font("montserrat_20"), 0)
     title.align(lv.ALIGN.TOP_MID, 0, 15)
 
     cal = lv.calendar(scr)

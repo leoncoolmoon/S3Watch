@@ -5,6 +5,7 @@ import time
 import machine
 import lvgl as lv
 import driver as hw
+from main import get_font
 
 APP_INFO = {
     "name": "World Clock / 世界时钟",
@@ -53,7 +54,7 @@ def run():
 
     title = lv.label(scr)
     title.set_text("World Clock")
-    title.set_style_text_font(lv.font_montserrat_20, 0)
+    title.set_style_text_font(get_font("montserrat_20"), 0)
     title.align(lv.ALIGN.TOP_MID, 0, 15)
 
     container = lv.obj(scr)
@@ -69,11 +70,11 @@ def run():
 
         lbl_c = lv.label(row)
         lbl_c.set_text(city)
-        lbl_c.set_style_text_font(lv.font_montserrat_16, 0)
+        lbl_c.set_style_text_font(get_font("montserrat_16"), 0)
         lbl_c.align(lv.ALIGN.LEFT_MID, 10, 0)
 
         lbl_t = lv.label(row)
-        lbl_t.set_style_text_font(lv.font_montserrat_20, 0)
+        lbl_t.set_style_text_font(get_font("montserrat_20"), 0)
         lbl_t.align(lv.ALIGN.RIGHT_MID, -10, 0)
 
         labels.append((offset, lbl_t))

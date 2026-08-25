@@ -3,6 +3,7 @@ alarm.py —— 闹钟应用
 """
 import lvgl as lv
 import driver as hw
+from main import get_font
 
 APP_INFO = {
     "name": "Alarm / 闹钟",
@@ -43,7 +44,7 @@ def run():
 
     title = lv.label(scr)
     title.set_text("Alarm Clock")
-    title.set_style_text_font(lv.font_montserrat_20, 0)
+    title.set_style_text_font(get_font("montserrat_20"), 0)
     title.align(lv.ALIGN.TOP_MID, 0, 15)
 
     list_container = lv.obj(scr)
@@ -60,7 +61,7 @@ def run():
 
         lbl = lv.label(row)
         lbl.set_text(time_str)
-        lbl.set_style_text_font(lv.font_montserrat_20, 0)
+        lbl.set_style_text_font(get_font("montserrat_20"), 0)
         lbl.align(lv.ALIGN.LEFT_MID, 10, 0)
 
         sw = lv.switch(row)

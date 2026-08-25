@@ -3,6 +3,7 @@ pedometer.py —— 计步器应用
 """
 import lvgl as lv
 import driver as hw
+from main import get_font
 
 APP_INFO = {
     "name": "Pedometer / 计步器",
@@ -43,16 +44,17 @@ def run():
 
     title = lv.label(scr)
     title.set_text("Step Tracker")
-    title.set_style_text_font(lv.font_montserrat_20, 0)
+    title.set_style_text_font(get_font("montserrat_20"), 0)
     title.align(lv.ALIGN.TOP_MID, 0, 15)
 
     lbl_steps = lv.label(scr)
     lbl_steps.set_text("0")
-    lbl_steps.set_style_text_font(lv.font_montserrat_48 if hasattr(lv, "font_montserrat_48") else lv.font_montserrat_24, 0)
+    lbl_steps.set_style_text_font(get_font("montserrat_48"), 0)
     lbl_steps.align(lv.ALIGN.CENTER, 0, -30)
 
     lbl_unit = lv.label(scr)
     lbl_unit.set_text("STEPS TODAY")
+    lbl_unit.set_style_text_font(get_font("montserrat_16"), 0)
     lbl_unit.set_style_text_color(lv.color_hex(0x888888), 0)
     lbl_unit.align(lv.ALIGN.CENTER, 0, 20)
 

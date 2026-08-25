@@ -4,6 +4,7 @@ file_explorer.py —— 文件浏览器应用
 import os
 import lvgl as lv
 import driver as hw
+from main import get_font
 
 APP_INFO = {
     "name": "Files / 文件浏览器",
@@ -44,7 +45,7 @@ def run():
 
     title = lv.label(scr)
     title.set_text("File Explorer")
-    title.set_style_text_font(lv.font_montserrat_20, 0)
+    title.set_style_text_font(get_font("montserrat_20"), 0)
     title.align(lv.ALIGN.TOP_MID, 0, 15)
 
     try:
@@ -54,6 +55,7 @@ def run():
 
     path_lbl = lv.label(scr)
     path_lbl.set_text("/")
+    path_lbl.set_style_text_font(get_font("montserrat_16"), 0)
     path_lbl.align(lv.ALIGN.TOP_LEFT, 20, 50)
 
     list_container = lv.obj(scr)
@@ -79,6 +81,7 @@ def run():
             btn_up.set_size(340, 40)
             lbl = lv.label(btn_up)
             lbl.set_text(".. (Up)")
+            lbl.set_style_text_font(get_font("montserrat_16"), 0)
             lbl.center()
             def up_cb(e):
                 parent = path.rsplit("/", 1)[0]
@@ -92,6 +95,7 @@ def run():
             btn.set_style_bg_color(lv.color_hex(0x2C3E50), 0)
             lbl = lv.label(btn)
             lbl.set_text(item)
+            lbl.set_style_text_font(get_font("montserrat_16"), 0)
             lbl.center()
 
             full = (path + "/" + item).replace("//", "/")

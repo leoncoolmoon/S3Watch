@@ -3,6 +3,7 @@ calculator.py —— 计算器应用
 """
 import lvgl as lv
 import driver as hw
+from main import get_font
 
 APP_INFO = {
     "name": "Calculator / 计算器",
@@ -43,7 +44,7 @@ def run():
 
     lbl_display = lv.label(scr)
     lbl_display.set_text("0")
-    lbl_display.set_style_text_font(lv.font_montserrat_36 if hasattr(lv, "font_montserrat_36") else lv.font_montserrat_24, 0)
+    lbl_display.set_style_text_font(get_font("montserrat_36"), 0)
     lbl_display.align(lv.ALIGN.TOP_RIGHT, -30, 40)
 
     current_val = "0"

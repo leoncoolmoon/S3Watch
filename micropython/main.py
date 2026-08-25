@@ -2,7 +2,7 @@
 main.py —— 手表主程序入口。
 
 初始化硬件并启动 UI TileView 框架 ( Watchface / App Picker / Settings )，
-并使用 while 循环保持 LVGL 界面轮询运行。
+并在主循环中持续调用 lv.timer_handler() 处理 LVGL 事件。
 """
 import sys
 import time
@@ -11,26 +11,45 @@ import os
 import lvgl as lv
 import driver as hw
 
-def get_font(name="montserrat_20"):
-    """动态加载 /fonts/ 下的外挂字体或退回内置字体"""
-    paths = [
+_loaded_fonts = {}
+
+def get_font(name="montserrat_14"):
+    """
+    根据字体名称动态获取字体。
+    自带字体仅包含 montserrat_12, 14, 16；
+    其它字体优先尝试从 /fonts/ 动态加载 bin 文件，若失败则退回 montserrat_14。
+    """
+    builtin_map = {
+        "12": getattr(lv, "font_montserrat_12", None),
+        "14": getattr(lv, "font_montserrat_14", None),
+        "16": getattr(lv, "font_montserrat_16", None),
+        "montserrat_12": getattr(lv, "font_montserrat_12", None),
+        "montserrat_14": getattr(lv, "font_montserrat_14", None),
+        "montserrat_16": getattr(lv, "font_montserrat_16", None),
+    }
+    if name in builtin_map and builtin_map[name] is not None:
+        return builtin_map[name]
+
+    if name in _loaded_fonts:
+        return _loaded_fonts[name]
+
+    possible_paths = [
         f"/fonts/lv_font_{name}.bin",
         f"/fonts/{name}.bin",
         f"A:/fonts/lv_font_{name}.bin",
-        f"A:/fonts/{name}.bin"
+        f"A:/fonts/{name}.bin",
     ]
     if hasattr(lv, "binfont_create"):
-        for p in paths:
+        for path in possible_paths:
             try:
-                f = lv.binfont_create(p)
+                f = lv.binfont_create(path)
                 if f:
+                    _loaded_fonts[name] = f
                     return f
             except Exception:
                 pass
-    attr = f"font_{name}"
-    if hasattr(lv, attr):
-        return getattr(lv, attr)
-    return lv.font_montserrat_20
+
+    return getattr(lv, "font_montserrat_14", None)
 
 def load_app(app_module_name):
     """动态加载并运行 /apps 目录下的 app 模块"""
@@ -121,8 +140,8 @@ def create_main_ui():
 
 def main():
     create_main_ui()
-    # 主程序运行循环，保持 UI 维持运行
     while True:
+        lv.timer_handler()
         time.sleep_ms(20)
 
 if __name__ == "__main__":

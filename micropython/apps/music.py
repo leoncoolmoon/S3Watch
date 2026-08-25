@@ -3,6 +3,7 @@ music.py —— 音乐播放器应用
 """
 import lvgl as lv
 import driver as hw
+from main import get_font
 
 APP_INFO = {
     "name": "Music / 音乐播放器",
@@ -43,16 +44,17 @@ def run():
 
     title = lv.label(scr)
     title.set_text("Music Player")
-    title.set_style_text_font(lv.font_montserrat_20, 0)
+    title.set_style_text_font(get_font("montserrat_20"), 0)
     title.align(lv.ALIGN.TOP_MID, 0, 15)
 
     lbl_title = lv.label(scr)
     lbl_title.set_text("Track 01")
-    lbl_title.set_style_text_font(lv.font_montserrat_24 if hasattr(lv, "font_montserrat_24") else lv.font_montserrat_20, 0)
+    lbl_title.set_style_text_font(get_font("montserrat_24"), 0)
     lbl_title.align(lv.ALIGN.CENTER, 0, -80)
 
     lbl_artist = lv.label(scr)
     lbl_artist.set_text("S3Watch Audio")
+    lbl_artist.set_style_text_font(get_font("montserrat_16"), 0)
     lbl_artist.set_style_text_color(lv.color_hex(0x888888), 0)
     lbl_artist.align(lv.ALIGN.CENTER, 0, -50)
 
@@ -98,6 +100,7 @@ def run():
 
     lbl_vol = lv.label(scr)
     lbl_vol.set_text("Volume")
+    lbl_vol.set_style_text_font(get_font("montserrat_16"), 0)
     lbl_vol.align(lv.ALIGN.BOTTOM_MID, 0, -70)
 
     slider_v = lv.slider(scr)
