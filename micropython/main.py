@@ -1,7 +1,7 @@
 """
 main.py —— 手表主程序入口。
 
-初始化硬件并启动 UI TileView 框架 ( Watchface / App Picker / Settings )，
+初始化硬件，注册 LVGL 文件系统驱动，并启动 UI TileView 框架 ( Watchface / App Picker / Settings )，
 并在主循环中持续调用 lv.timer_handler() 处理 LVGL 事件。
 """
 import sys
@@ -12,13 +12,32 @@ import lvgl as lv
 import driver as hw
 
 _loaded_fonts = {}
+_fs_driver_registered = False
+
+def init_fs_driver():
+    """尝试注册 LVGL 文件系统驱动（如目标固件包含 fs_driver 模块）"""
+    global _fs_driver_registered
+    if not _fs_driver_registered:
+        try:
+            import fs_driver
+            if hasattr(fs_driver, "fs_register"):
+                for letter in ['S', 'A', 'F']:
+                    try:
+                        fs_driver.fs_register(lv.fs_drv_t(), letter)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        _fs_driver_registered = True
 
 def get_font(name="montserrat_14"):
     """
     根据字体名称动态获取字体。
     自带字体仅包含 montserrat_12, 14, 16；
-    其它字体优先尝试从 /fonts/ 动态加载 bin 文件，若失败则退回 montserrat_14。
+    其它字体优先尝试从已注册驱动盘符 (S:, A:, /) 动态加载 bin 文件，若失败则退回 montserrat_14。
     """
+    init_fs_driver()
+
     builtin_map = {
         "12": getattr(lv, "font_montserrat_12", None),
         "14": getattr(lv, "font_montserrat_14", None),
@@ -34,10 +53,15 @@ def get_font(name="montserrat_14"):
         return _loaded_fonts[name]
 
     possible_paths = [
-        f"/fonts/lv_font_{name}.bin",
-        f"/fonts/{name}.bin",
-        f"A:/fonts/lv_font_{name}.bin",
+        f"S:/fonts/{name}.bin",
+        f"S:/fonts/lv_font_{name}.bin",
         f"A:/fonts/{name}.bin",
+        f"A:/fonts/lv_font_{name}.bin",
+        f"/fonts/{name}.bin",
+        f"/fonts/lv_font_{name}.bin",
+        f"S:/{name}.bin",
+        f"A:/{name}.bin",
+        f"/{name}.bin",
     ]
     if hasattr(lv, "binfont_create"):
         for path in possible_paths:
@@ -64,6 +88,7 @@ def load_app(app_module_name):
 
 def create_main_ui():
     hw.init_essential()
+    init_fs_driver()
 
     scr = lv.screen_active()
     if hasattr(scr, "clean"):
