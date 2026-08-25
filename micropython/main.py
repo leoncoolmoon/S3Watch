@@ -1,8 +1,8 @@
 """
 main.py —— 手表主程序入口。
 
-初始化硬件，注册 LVGL 文件系统驱动，并启动 UI TileView 框架 ( Watchface / App Picker / Settings )，
-并在主循环中持续调用 lv.timer_handler() 处理 LVGL 事件。
+初始化硬件，注册 LVGL 文件系统驱动，支持全局调试与触摸调优，并启动 UI TileView 框架。
+在主循环中持续调用 lv.timer_handler() 处理 LVGL 事件。
 """
 import sys
 import time
@@ -12,11 +12,19 @@ import lvgl as lv
 import driver as hw
 
 _loaded_fonts = {}
+_registered_drive_letter = None
 _fs_driver_registered = False
 
+DEBUG = True
+DEBUG_TOUCH = True
+
+def log_debug(msg):
+    if DEBUG:
+        print(f"[S3Watch] {msg}")
+
 def init_fs_driver():
-    """尝试注册 LVGL 文件系统驱动（如目标固件包含 fs_driver 模块）"""
-    global _fs_driver_registered
+    """尝试注册 LVGL 文件系统驱动，并记录首个成功的盘符字母"""
+    global _registered_drive_letter, _fs_driver_registered
     if not _fs_driver_registered:
         try:
             import fs_driver
@@ -24,17 +32,20 @@ def init_fs_driver():
                 for letter in ['S', 'A', 'F']:
                     try:
                         fs_driver.fs_register(lv.fs_drv_t(), letter)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                        _registered_drive_letter = letter
+                        log_debug(f"FS Driver registered successfully with drive '{letter}:'")
+                        break
+                    except Exception as e:
+                        log_debug(f"FS Driver register letter '{letter}' attempt failed: {e}")
+        except Exception as e:
+            log_debug(f"fs_driver module import skipped/failed: {e}")
         _fs_driver_registered = True
 
 def get_font(name="montserrat_14"):
     """
     根据字体名称动态获取字体。
     自带字体仅包含 montserrat_12, 14, 16；
-    其它字体优先尝试从已注册驱动盘符 (S:, A:, /) 动态加载 bin 文件，若失败则退回 montserrat_14。
+    其它字体优先从已成功注册的盘符（如 S:）加载，并打印 REPL 调试信息。
     """
     init_fs_driver()
 
@@ -52,31 +63,40 @@ def get_font(name="montserrat_14"):
     if name in _loaded_fonts:
         return _loaded_fonts[name]
 
-    possible_paths = [
+    possible_paths = []
+    if _registered_drive_letter:
+        possible_paths.extend([
+            f"{_registered_drive_letter}:/fonts/{name}.bin",
+            f"{_registered_drive_letter}:/fonts/lv_font_{name}.bin",
+            f"{_registered_drive_letter}:/{name}.bin",
+        ])
+    possible_paths.extend([
         f"S:/fonts/{name}.bin",
         f"S:/fonts/lv_font_{name}.bin",
         f"A:/fonts/{name}.bin",
         f"A:/fonts/lv_font_{name}.bin",
         f"/fonts/{name}.bin",
         f"/fonts/lv_font_{name}.bin",
-        f"S:/{name}.bin",
-        f"A:/{name}.bin",
         f"/{name}.bin",
-    ]
+    ])
+
     if hasattr(lv, "binfont_create"):
         for path in possible_paths:
             try:
                 f = lv.binfont_create(path)
                 if f:
                     _loaded_fonts[name] = f
+                    print(f"[Font] Successfully loaded font '{name}' from: {path}")
                     return f
             except Exception:
                 pass
 
+    log_debug(f"Font '{name}' not found, fallback to montserrat_14")
     return getattr(lv, "font_montserrat_14", None)
 
 def load_app(app_module_name):
     """动态加载并运行 /apps 目录下的 app 模块"""
+    log_debug(f"Launching app: {app_module_name}")
     try:
         mod = __import__(app_module_name)
         if hasattr(mod, "run"):
@@ -86,9 +106,20 @@ def load_app(app_module_name):
     except Exception as e:
         print(f"[Launcher] Failed to launch {app_module_name}: {e}")
 
+def setup_touch_debug():
+    """为系统输入与交互添加调试捕获"""
+    if not DEBUG_TOUCH:
+        return
+    try:
+        touch = hw.get_touch()
+        log_debug(f"Touch driver active: {touch}")
+    except Exception as e:
+        log_debug(f"Touch driver setup query info: {e}")
+
 def create_main_ui():
     hw.init_essential()
     init_fs_driver()
+    setup_touch_debug()
 
     scr = lv.screen_active()
     if hasattr(scr, "clean"):
@@ -134,7 +165,7 @@ def create_main_ui():
             elif os.stat("/apps/" + f)[0] & 0x4000:  # Directory app
                 apps_list.append(f)
     except Exception as e:
-        print(f"[Launcher] Error listing /apps: {e}")
+        log_debug(f"Error listing /apps: {e}")
         apps_list = ["stopwatch", "calculator", "calendar_app", "alarm", "world_clock", "music", "pedometer", "file_explorer", "signalk", "settings"]
 
     for app_name in sorted(apps_list):
@@ -158,12 +189,14 @@ def create_main_ui():
 
         def make_cb(name):
             def cb(e):
+                log_debug(f"Button clicked for app: {name}")
                 load_app(name)
             return cb
 
         btn.add_event_cb(make_cb(app_name), lv.EVENT.CLICKED, None)
 
 def main():
+    log_debug("Starting S3Watch Main Program...")
     create_main_ui()
     while True:
         lv.timer_handler()
