@@ -1,13 +1,14 @@
 """
 main.py —— 手表主程序入口。
 
-初始化硬件，注册 LVGL 文件系统驱动，支持全局调试与触摸调优，并启动 UI TileView 框架。
-在主循环中持续调用 lv.timer_handler() 处理 LVGL 事件。
+初始化硬件，注册 LVGL 文件系统驱动，支持 RTC 内存程序切换与重置。
+在主循环中通过 lv.tick_inc() 与 lv.timer_handler() 驱动 LVGL 事件与触摸回调。
 """
 import sys
 import time
 import gc
 import os
+import machine
 import lvgl as lv
 import driver as hw
 
@@ -21,6 +22,33 @@ DEBUG_TOUCH = True
 def log_debug(msg):
     if DEBUG:
         print(f"[S3Watch] {msg}")
+
+def set_next_app(app_name="", args=None):
+    """将目标程序信息写入 RTC 内存并直接触发系统复位 (machine.reset())"""
+    try:
+        rtc = machine.RTC()
+        data = app_name.encode("utf-8") if app_name else b""
+        rtc.memory(data)
+        log_debug(f"RTC target set to '{app_name}', triggering system reset...")
+        machine.reset()
+    except Exception as e:
+        log_debug(f"set_next_app error: {e}")
+
+def check_rtc_navigation():
+    """主程序启动时检查 RTC 内存是否有跳转目标"""
+    try:
+        rtc = machine.RTC()
+        mem = rtc.memory()
+        rtc.memory(b"")  # 立即清空，防止重复引导循环
+        if mem:
+            target = mem.decode("utf-8").strip()
+            if target:
+                log_debug(f"RTC navigation target detected: '{target}'")
+                load_app(target)
+                return True
+    except Exception as e:
+        log_debug(f"check_rtc_navigation error: {e}")
+    return False
 
 def init_fs_driver():
     """尝试注册 LVGL 文件系统驱动，并记录首个成功的盘符字母"""
@@ -197,8 +225,14 @@ def create_main_ui():
 
 def main():
     log_debug("Starting S3Watch Main Program...")
-    create_main_ui()
+    if not check_rtc_navigation():
+        create_main_ui()
+
+    _last_tick = time.ticks_ms()
     while True:
+        _now = time.ticks_ms()
+        lv.tick_inc(time.ticks_diff(_now, _last_tick))
+        _last_tick = _now
         lv.timer_handler()
         time.sleep_ms(20)
 

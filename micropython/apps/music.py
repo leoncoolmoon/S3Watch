@@ -1,6 +1,7 @@
 """
 music.py —— 音乐播放器应用
 """
+import machine
 import lvgl as lv
 import driver as hw
 from main import get_font
@@ -14,7 +15,7 @@ def clean_obj(obj):
     if hasattr(obj, "clean"):
         obj.clean()
 
-def add_back_button(parent):
+def add_back_button(parent, target_app=""):
     btn = lv.button(parent)
     btn.set_size(70, 36)
     btn.align(lv.ALIGN.TOP_LEFT, 10, 10)
@@ -23,14 +24,16 @@ def add_back_button(parent):
     lbl.set_text("< Back")
     lbl.center()
     def on_back(e):
-        def async_back(t):
-            if t: t.delete()
+        try:
+            from main import set_next_app
+            set_next_app(target_app)
+        except Exception:
             try:
-                import main
-                main.create_main_ui()
+                rtc = machine.RTC()
+                rtc.memory(target_app.encode("utf-8") if target_app else b"")
+                machine.reset()
             except Exception as ex:
-                print(f"Back error: {ex}")
-        lv.timer_create(async_back, 10, None)
+                print(f"Back reset error: {ex}")
     btn.add_event_cb(on_back, lv.EVENT.CLICKED, None)
     return btn
 
