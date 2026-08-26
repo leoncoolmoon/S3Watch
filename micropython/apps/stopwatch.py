@@ -2,19 +2,14 @@
 stopwatch.py —— 秒表应用
 """
 import time
-import machine
 import lvgl as lv
 import driver as hw
-from main import get_font
+from services import get_font, clean_obj, add_back_button
 
 APP_INFO = {
     "name": "Stopwatch / 秒表",
     "icon": None
 }
-
-def clean_obj(obj):
-    if hasattr(obj, "clean"):
-        obj.clean()
 
 class StopwatchApp:
     def __init__(self):
@@ -27,28 +22,6 @@ class StopwatchApp:
         if self.state == "RUNNING":
             return self.accum_time + int((time.ticks_ms() - self.start_time))
         return self.accum_time
-
-def add_back_button(parent, target_app=""):
-    btn = lv.button(parent)
-    btn.set_size(70, 36)
-    btn.align(lv.ALIGN.TOP_LEFT, 10, 10)
-    btn.set_style_bg_color(lv.color_hex(0x34495E), 0)
-    lbl = lv.label(btn)
-    lbl.set_text("< Back")
-    lbl.center()
-    def on_back(e):
-        try:
-            from main import set_next_app
-            set_next_app(target_app)
-        except Exception:
-            try:
-                rtc = machine.RTC()
-                rtc.memory(target_app.encode("utf-8") if target_app else b"")
-                machine.reset()
-            except Exception as ex:
-                print(f"Back reset error: {ex}")
-    btn.add_event_cb(on_back, lv.EVENT.CLICKED, None)
-    return btn
 
 def run():
     hw.init_essential()
